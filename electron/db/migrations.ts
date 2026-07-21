@@ -1,0 +1,283 @@
+import type Database from 'better-sqlite3'
+
+/**
+ * Runs all DDL migrations on first launch and on schema updates.
+ * Uses CREATE TABLE IF NOT EXISTS — safe to call on every startup.
+ * ALTER TABLE statements are appended here (never modify existing CREATEs).
+ */
+export function runMigrations(sqlite: Database.Database): void {
+  sqlite.exec(`
+    -- ─── Entrepôts & boutiques ─────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS warehouses (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      type        TEXT NOT NULL DEFAULT 'boutique',
+      address     TEXT,
+      is_default  INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at  TEXT
+    );
+
+    -- ─── Produits ──────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS products (
+      id              TEXT PRIMARY KEY,
+      reference       TEXT NOT NULL UNIQUE,
+      name            TEXT NOT NULL,
+      brand           TEXT,
+      category        TEXT,
+      description     TEXT,
+      alert_threshold INTEGER NOT NULL DEFAULT 0,
+      created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS products_ref_idx ON products(reference);
+
+    -- ─── Fournisseurs ──────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      country    TEXT,
+      city       TEXT,
+      phone      TEXT,
+      email      TEXT,
+      whatsapp   TEXT,
+      address    TEXT,
+      notes      TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TEXT
+    );
+
+    -- ─── Clients ───────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS customers (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      phone      TEXT,
+      email      TEXT,
+      whatsapp   TEXT,
+      address    TEXT,
+      type       TEXT NOT NULL DEFAULT 'wholesale',
+      notes      TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TEXT
+    );
+
+    -- ─── Commandes fournisseur ─────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+      id                                    TEXT PRIMARY KEY,
+      reference                             TEXT NOT NULL UNIQUE,
+      supplier_id                           TEXT NOT NULL REFERENCES suppliers(id),
+      order_date                            TEXT NOT NULL,
+      expected_delivery_date                TEXT,
+      status                                TEXT NOT NULL DEFAULT 'confirmed',
+      product_cost_fcfa                     INTEGER NOT NULL DEFAULT 0,
+      freight_cost_fcfa                     INTEGER NOT NULL DEFAULT 0,
+      customs_cost_fcfa                     INTEGER NOT NULL DEFAULT 0,
+      other_costs_fcfa                      INTEGER NOT NULL DEFAULT 0,
+      total_cost_fcfa                       INTEGER NOT NULL DEFAULT 0,
+      simulated_sale_price_per_carton_fcfa  INTEGER,
+      notes                                 TEXT,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS po_supplier_idx ON purchase_orders(supplier_id);
+    CREATE INDEX IF NOT EXISTS po_status_idx   ON purchase_orders(status);
+
+    -- ─── Lignes de commande ────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS purchase_order_items (
+      id                       TEXT PRIMARY KEY,
+      order_id                 TEXT NOT NULL REFERENCES purchase_orders(id),
+      product_id               TEXT NOT NULL REFERENCES products(id),
+      cartons_ordered          INTEGER NOT NULL,
+      pairs_per_carton         INTEGER NOT NULL,
+      unit_cost_per_carton_fcfa INTEGER NOT NULL,
+      notes                    TEXT,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS poi_order_idx ON purchase_order_items(order_id);
+
+    -- ─── Composition pointures par carton ──────────────────────────────────
+    CREATE TABLE IF NOT EXISTS carton_size_compositions (
+      id            TEXT PRIMARY KEY,
+      order_item_id TEXT NOT NULL REFERENCES purchase_order_items(id),
+      size          TEXT NOT NULL,
+      pairs_count   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS csc_item_idx ON carton_size_compositions(order_item_id);
+
+    -- ─── Paiements fournisseur ─────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS order_payments (
+      id           TEXT PRIMARY KEY,
+      order_id     TEXT NOT NULL REFERENCES purchase_orders(id),
+      amount_fcfa  INTEGER NOT NULL,
+      payment_date TEXT NOT NULL,
+      type         TEXT NOT NULL,
+      notes        TEXT,
+      created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at   TEXT
+    );
+
+    -- ─── Arrivage #1 : réceptions fournisseur ──────────────────────────────
+    CREATE TABLE IF NOT EXISTS receptions (
+      id             TEXT PRIMARY KEY,
+      order_id       TEXT NOT NULL REFERENCES purchase_orders(id),
+      warehouse_id   TEXT NOT NULL REFERENCES warehouses(id),
+      reception_date TEXT NOT NULL,
+      notes          TEXT,
+      created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at     TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS reception_items (
+      id               TEXT PRIMARY KEY,
+      reception_id     TEXT NOT NULL REFERENCES receptions(id),
+      order_item_id    TEXT NOT NULL REFERENCES purchase_order_items(id),
+      cartons_received INTEGER NOT NULL,
+      created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ri_reception_idx ON reception_items(reception_id);
+
+    -- ─── Arrivage #2 : transferts entrepôt → boutique ──────────────────────
+    CREATE TABLE IF NOT EXISTS transfers (
+      id                TEXT PRIMARY KEY,
+      from_warehouse_id TEXT NOT NULL REFERENCES warehouses(id),
+      to_warehouse_id   TEXT NOT NULL REFERENCES warehouses(id),
+      transfer_date     TEXT NOT NULL,
+      notes             TEXT,
+      created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at        TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS transfer_items (
+      id          TEXT PRIMARY KEY,
+      transfer_id TEXT NOT NULL REFERENCES transfers(id),
+      product_id  TEXT NOT NULL REFERENCES products(id),
+      size        TEXT NOT NULL,
+      pairs_count INTEGER NOT NULL,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ti_transfer_idx ON transfer_items(transfer_id);
+
+    -- ─── Mouvements de stock (source de vérité) ────────────────────────────
+    CREATE TABLE IF NOT EXISTS stock_movements (
+      id             TEXT PRIMARY KEY,
+      product_id     TEXT NOT NULL REFERENCES products(id),
+      warehouse_id   TEXT NOT NULL REFERENCES warehouses(id),
+      size           TEXT NOT NULL,
+      quantity       INTEGER NOT NULL,
+      movement_type  TEXT NOT NULL,
+      reference_id   TEXT,
+      reference_type TEXT,
+      unit_cost_fcfa INTEGER,
+      movement_date  TEXT NOT NULL,
+      notes          TEXT,
+      created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sm_product_idx   ON stock_movements(product_id);
+    CREATE INDEX IF NOT EXISTS sm_warehouse_idx ON stock_movements(warehouse_id);
+    CREATE INDEX IF NOT EXISTS sm_date_idx      ON stock_movements(movement_date);
+    CREATE INDEX IF NOT EXISTS sm_ref_idx       ON stock_movements(reference_id);
+
+    -- ─── Ventes ────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS sales (
+      id               TEXT PRIMARY KEY,
+      reference        TEXT NOT NULL UNIQUE,
+      customer_id      TEXT REFERENCES customers(id),
+      warehouse_id     TEXT NOT NULL REFERENCES warehouses(id),
+      sale_date        TEXT NOT NULL,
+      sale_type        TEXT NOT NULL,
+      total_amount_fcfa INTEGER NOT NULL DEFAULT 0,
+      paid_amount_fcfa  INTEGER NOT NULL DEFAULT 0,
+      status           TEXT NOT NULL DEFAULT 'pending',
+      notes            TEXT,
+      created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sales_customer_idx ON sales(customer_id);
+    CREATE INDEX IF NOT EXISTS sales_date_idx     ON sales(sale_date);
+
+    CREATE TABLE IF NOT EXISTS sale_items (
+      id             TEXT PRIMARY KEY,
+      sale_id        TEXT NOT NULL REFERENCES sales(id),
+      product_id     TEXT NOT NULL REFERENCES products(id),
+      size           TEXT NOT NULL,
+      quantity       INTEGER NOT NULL,
+      unit_price_fcfa INTEGER NOT NULL,
+      created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS si_sale_idx ON sale_items(sale_id);
+
+    CREATE TABLE IF NOT EXISTS sale_payments (
+      id           TEXT PRIMARY KEY,
+      sale_id      TEXT NOT NULL REFERENCES sales(id),
+      amount_fcfa  INTEGER NOT NULL,
+      payment_date TEXT NOT NULL,
+      notes        TEXT,
+      created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at   TEXT
+    );
+
+    -- ─── Colonnes ajoutées après déploiement initial ──────────────────────
+    -- Ces ALTER TABLE sont idempotents : si la colonne existe déjà, SQLite ignore.
+
+    -- ─── Triggers updated_at ───────────────────────────────────────────────
+    CREATE TRIGGER IF NOT EXISTS warehouses_updated_at
+      AFTER UPDATE ON warehouses BEGIN
+        UPDATE warehouses SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS products_updated_at
+      AFTER UPDATE ON products BEGIN
+        UPDATE products SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS suppliers_updated_at
+      AFTER UPDATE ON suppliers BEGIN
+        UPDATE suppliers SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS customers_updated_at
+      AFTER UPDATE ON customers BEGIN
+        UPDATE customers SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS purchase_orders_updated_at
+      AFTER UPDATE ON purchase_orders BEGIN
+        UPDATE purchase_orders SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS sales_updated_at
+      AFTER UPDATE ON sales BEGIN
+        UPDATE sales SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+  `)
+
+  // ALTER TABLE migrations — safe to run even if column already exists
+  const alterMigrations = [
+    `ALTER TABLE products ADD COLUMN image_data TEXT`,
+    `ALTER TABLE products ADD COLUMN pairs_per_carton INTEGER NOT NULL DEFAULT 12`,
+    `ALTER TABLE products ADD COLUMN selling_price_per_carton INTEGER NOT NULL DEFAULT 0`,
+  ]
+  for (const sql of alterMigrations) {
+    try { sqlite.exec(sql) } catch { /* column already exists — ignore */ }
+  }
+}

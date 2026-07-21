@@ -1,0 +1,51 @@
+// @see - https://www.electron.build/configuration/configuration
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.feujio.stockpilot",
+  "asar": false,
+  "productName": "StockPilot",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist",
+    "dist-electron"
+  ],
+  "asarUnpack": [
+    "node_modules/better-sqlite3/**/*",
+    "node_modules/bindings/**/*",
+    "node_modules/file-uri-to-path/**/*"
+  ],
+  // ─── Auto-update via GitHub Releases ────────────────────────────────
+  // ⚠️ Remplace "owner" par ton compte/organisation GitHub, et crée un repo
+  //    public nommé "stockpilot" (ou change "repo" ci-dessous).
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "franckDev21",
+      "repo": "stockpilot"
+    }
+  ],
+  "mac": {
+    "icon": "build/icon.icns",
+    "identity": null,
+    "target": ["dmg", "zip"],
+    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+  },
+  "win": {
+    "icon": "build/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  }
+}

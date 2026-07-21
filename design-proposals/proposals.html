@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>StockPilot — Propositions design · Multi-paiements fournisseur</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',Arial,sans-serif; font-size:11px; background:#f1f5f9; color:#1e293b; }
+  @media print {
+    .page { page-break-after:always; page-break-inside:avoid; }
+    body { background:white; }
+    .no-print { display:none; }
+  }
+  .page { background:white; padding:28px 24px; margin:0 auto 32px; max-width:1280px; box-shadow:0 4px 24px rgba(0,0,0,.1); }
+
+  /* HEADER */
+  .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px; padding-bottom:14px; border-bottom:2px solid #e2e8f0; }
+  .page-header h1 { font-size:18px; font-weight:800; color:#7c3aed; }
+  .option-badge { display:inline-block; color:white; font-size:11px; font-weight:700; padding:3px 12px; border-radius:20px; margin-bottom:5px; }
+  .option-title { font-size:15px; font-weight:800; color:#0f172a; margin-bottom:3px; }
+  .option-desc { font-size:10px; color:#64748b; max-width:680px; line-height:1.5; }
+  .meta { text-align:right; font-size:10px; color:#94a3b8; }
+
+  .pros-cons { display:flex; gap:12px; margin:10px 0 18px; }
+  .pros,.cons { flex:1; border-radius:7px; padding:9px 11px; border-left:3px solid; background:#f8fafc; }
+  .pros { border-color:#22c55e; } .cons { border-color:#f59e0b; }
+  .pros h4 { color:#16a34a; } .cons h4 { color:#d97706; }
+  .pros h4,.cons h4 { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; margin-bottom:5px; }
+  .pros li,.cons li { font-size:9px; color:#475569; margin-left:12px; margin-bottom:2px; }
+
+  /* TABLE */
+  .table-wrap { border-radius:9px; border:1.5px solid #e2e8f0; overflow:hidden; }
+  table { width:100%; border-collapse:collapse; font-size:10px; }
+  thead tr { background:#f8fafc; }
+  th { padding:7px 6px; text-align:left; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#64748b; border-bottom:2px solid #e2e8f0; white-space:nowrap; }
+  td { padding:6px 6px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+  .num { text-align:right; }
+  .order-cell { font-family:monospace; font-size:9px; font-weight:700; color:#7c3aed; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:5px; padding:2px 7px; white-space:nowrap; display:inline-block; margin-bottom:4px; }
+  .ref-badge { font-family:monospace; font-size:8px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:3px; padding:1px 5px; color:#475569; }
+  .thumb { width:26px; height:26px; border-radius:5px; display:inline-block; vertical-align:middle; margin-right:5px; flex-shrink:0; }
+  .product-name { font-weight:600; color:#1e293b; font-size:10px; }
+  .product-sub { font-size:8px; color:#94a3b8; }
+  .price { font-weight:700; color:#1e293b; font-variant-numeric:tabular-nums; }
+  .price-formula { font-size:7px; color:#94a3b8; display:block; font-style:italic; }
+  .date-cell { font-size:9px; color:#64748b; white-space:nowrap; }
+  .badge { display:inline-block; font-size:8px; font-weight:700; border-radius:8px; padding:2px 7px; }
+  .badge-amber { background:#fef3c7; color:#d97706; }
+  .badge-green { background:#dcfce7; color:#16a34a; }
+  .badge-red { background:#fee2e2; color:#dc2626; }
+  .badge-blue { background:#dbeafe; color:#2563eb; }
+  .group-sep { border-top:2.5px solid #e2e8f0 !important; }
+  .total-row td { background:#f8fafc; font-weight:700; border-top:2px solid #e2e8f0; }
+
+  /* PAYMENT ROWS — Option A */
+  .pay-section-header td { background:#f5f3ff; padding:5px 8px; font-size:9px; font-weight:700; color:#7c3aed; text-transform:uppercase; letter-spacing:.04em; border-top:1.5px solid #ede9fe; border-bottom:1px solid #ede9fe; }
+  .pay-row td { background:#faf9ff; border-bottom:1px dashed #ede9fe; }
+  .pay-row:last-of-type td { border-bottom:1.5px solid #e2e8f0; }
+  .pay-total-row td { background:#ede9fe; font-weight:700; border-bottom:2px solid #c4b5fd; }
+  .amount-paid { color:#16a34a; font-weight:700; font-variant-numeric:tabular-nums; }
+  .amount-due { color:#dc2626; font-weight:700; font-variant-numeric:tabular-nums; }
+  .amount-zero { color:#94a3b8; font-variant-numeric:tabular-nums; }
+  .type-avance { background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:8px; font-weight:700; border-radius:6px; padding:2px 6px; }
+  .type-solde { background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; font-size:8px; font-weight:700; border-radius:6px; padding:2px 6px; }
+  .type-full { background:#dbeafe; color:#1d4ed8; border:1px solid #bfdbfe; font-size:8px; font-weight:700; border-radius:6px; padding:2px 6px; }
+  .solde-badge { background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; font-size:9px; font-weight:700; border-radius:8px; padding:2px 8px; white-space:nowrap; }
+  .pending-badge { background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:9px; font-weight:700; border-radius:8px; padding:2px 8px; white-space:nowrap; }
+
+  /* OPTION B mini-table */
+  .pay-mini-wrap { margin:0; border-top:1.5px solid #e2e8f0; }
+  .pay-mini-header { background:#f8f5ff; padding:5px 10px; font-size:9px; font-weight:700; color:#7c3aed; border-bottom:1px solid #ede9fe; display:flex; align-items:center; gap:6px; }
+  .pay-mini-table { width:100%; border-collapse:collapse; }
+  .pay-mini-table th { padding:4px 8px; font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; background:#faf9ff; border-bottom:1px solid #ede9fe; text-align:left; }
+  .pay-mini-table .num { text-align:right; }
+  .pay-mini-table td { padding:5px 8px; font-size:9px; border-bottom:1px dashed #f1f5f9; }
+  .pay-mini-table tr:last-child td { border-bottom:none; }
+  .pay-mini-footer { background:#f0fdf4; padding:6px 10px; display:flex; justify-content:space-between; align-items:center; border-top:1.5px solid #bbf7d0; font-size:10px; }
+  .pay-mini-footer-pending { background:#fffbeb; border-top:1.5px solid #fde68a; }
+
+  /* PROGRESS BAR */
+  .prog-bar { width:100%; height:5px; background:#e2e8f0; border-radius:3px; overflow:hidden; margin-top:5px; }
+  .prog-fill-green { height:100%; background:#22c55e; border-radius:3px; }
+  .prog-fill-amber { height:100%; background:#f59e0b; border-radius:3px; }
+
+  /* OPTION C card */
+  .pay-card { border:1.5px solid #ede9fe; border-radius:8px; padding:8px 10px; background:white; min-width:160px; }
+  .pay-card-title { font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#7c3aed; margin-bottom:6px; }
+  .pay-card-item { display:flex; justify-content:space-between; align-items:center; padding:3px 0; border-bottom:1px dashed #f1f5f9; font-size:9px; gap:8px; }
+  .pay-card-item:last-of-type { border-bottom:none; }
+  .pay-card-label { color:#64748b; white-space:nowrap; }
+  .pay-card-val { font-weight:700; text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .pay-card-sep { border-top:1.5px solid #ede9fe; margin:5px 0; }
+  .pay-card-total { font-size:11px; font-weight:800; color:#7c3aed; text-align:right; font-variant-numeric:tabular-nums; }
+
+  .recommendation { background:linear-gradient(135deg,#f5f3ff,#ede9fe); border:1.5px solid #c4b5fd; border-radius:10px; padding:14px 16px; margin-top:22px; }
+  .recommendation h3 { font-size:13px; font-weight:800; color:#7c3aed; margin-bottom:6px; }
+  .recommendation p { font-size:10px; color:#4c1d95; line-height:1.6; }
+
+  .page-intro { background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:8px; padding:14px; margin-bottom:20px; font-size:10px; color:#475569; line-height:1.6; }
+  .page-intro b { color:#1e293b; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ PAGE 1 — INTRO ═══════════════════════════════ -->
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1>StockPilot</h1>
+      <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:3px">Design · Affichage multi-paiements par commande fournisseur</div>
+      <div style="font-size:9px;color:#64748b;margin-top:3px">Branche : feature/payment-columns-inline · 3 options</div>
+    </div>
+    <div class="meta">À soumettre au client</div>
+  </div>
+
+  <div class="page-intro">
+    <b>Contexte :</b> Une commande fournisseur peut avoir <b>plusieurs paiements</b> (avances + solde).
+    Le client veut voir <b>tous les paiements déjà effectués</b> directement dans le tableau, avec pour chaque paiement :
+    le montant, le type (Avance / Solde / Complet), une note, le reste après ce paiement, la date et l'heure.
+    <br><br>
+    Exemple d'une commande à <b>8 850 000 FCFA</b> avec 3 paiements :
+    <span style="margin:0 8px;background:#fef3c7;color:#b45309;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700">Avance 1 : 2 000 000</span>
+    <span style="margin:0 8px;background:#fef3c7;color:#b45309;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700">Avance 2 : 3 425 000</span>
+    <span style="background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700">Solde : 3 425 000</span>
+    → Total soldé ✓
+  </div>
+
+  <table style="width:100%;border-collapse:collapse;font-size:10px">
+    <tr>
+      <td style="padding:12px;background:#f5f3ff;border-radius:8px;border:1px solid #ede9fe;width:33%;vertical-align:top">
+        <div style="font-size:11px;font-weight:800;color:#7c3aed;margin-bottom:5px">🅐 Paiements en sous-lignes</div>
+        <div style="font-size:10px;color:#475569;line-height:1.5">Chaque paiement a sa propre ligne sous les produits, dans le même tableau. Running balance visible. Vision comptable complète.</div>
+      </td>
+      <td style="width:8px"></td>
+      <td style="padding:12px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe;width:33%;vertical-align:top">
+        <div style="font-size:11px;font-weight:800;color:#2563eb;margin-bottom:5px">🅑 Mini-tableau paiements</div>
+        <div style="font-size:10px;color:#475569;line-height:1.5">Les produits s'affichent normalement. Un mini-tableau de paiements apparaît juste en dessous, toujours visible, avec toutes les transactions.</div>
+      </td>
+      <td style="width:8px"></td>
+      <td style="padding:12px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;width:33%;vertical-align:top">
+        <div style="font-size:11px;font-weight:800;color:#16a34a;margin-bottom:5px">🅒 Colonne carte paiement</div>
+        <div style="font-size:10px;color:#475569;line-height:1.5">Une colonne dédiée à droite affiche une carte récapitulative avec tous les paiements listés + barre de progression. Très moderne.</div>
+      </td>
+    </tr>
+  </table>
+</div>
+
+
+<!-- ═══════════════════ PAGE 2 — OPTION A ════════════════════════════ -->
+<div class="page">
+  <div class="page-header">
+    <div>
+      <div class="option-badge" style="background:#7c3aed">Option A</div>
+      <div class="option-title">Paiements en sous-lignes dans le tableau principal</div>
+      <div class="option-desc">Après les lignes produit de chaque commande, une section "Paiements" liste chaque transaction sur sa propre ligne avec le solde cumulatif.</div>
+    </div>
+    <div class="meta">Page 1 / 3</div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros"><h4>✓ Points forts</h4><ul>
+      <li>Chaque paiement bien séparé et lisible</li>
+      <li>Solde restant visible après chaque paiement</li>
+      <li>Vue comptable professionnelle</li>
+      <li>Ajout de paiement inline possible</li>
+    </ul></div>
+    <div class="cons"><h4>⚡ Points à noter</h4><ul>
+      <li>Tableau plus long (beaucoup de lignes)</li>
+      <li>Scroll nécessaire pour beaucoup de commandes</li>
+    </ul></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:95px">N°Commande</th>
+          <th style="width:180px">Produits</th>
+          <th style="width:130px">Fournisseur</th>
+          <th>Réf. produit</th>
+          <th>Date / Heure</th>
+          <th class="num">Cartons</th>
+          <th class="num">Unité</th>
+          <th class="num">Prix unité</th>
+          <th class="num">Prix carton</th>
+          <th class="num">Total produit</th>
+          <th class="num" style="width:80px">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <!-- CMD-001 : 3 produits -->
+        <tr class="group-sep">
+          <td rowspan="3" style="vertical-align:top;padding-top:8px">
+            <div class="order-cell">CMD-2026-09-01</div>
+            <div style="margin-top:5px"><span class="badge badge-green">Complète</span></div>
+            <div class="date-cell" style="margin-top:4px">26 nov. 2025</div>
+          </td>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe)"></div><div><div class="product-name">Nike Air Force 1 Blanc</div><div class="product-sub">Sneakers · 38–45</div></div></div></td>
+          <td rowspan="3" style="vertical-align:top;padding-top:8px;font-weight:600;font-size:10px">Guangzhou Shoes<br><span style="font-size:8px;color:#94a3b8;font-weight:400">+86 20 8888 1234</span></td>
+          <td><span class="ref-badge">REF-AF1-BLC</span></td>
+          <td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">20</td><td class="num">60</td>
+          <td class="num">3 000</td>
+          <td class="num price">180 000<span class="price-formula">3 000×60</span></td>
+          <td class="num price">3 600 000</td>
+          <td rowspan="3" style="text-align:center;vertical-align:middle">
+            <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+              <span style="font-size:8px;color:#7c3aed;cursor:pointer;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:2px 7px">👁 Voir</span>
+              <span style="font-size:8px;color:#64748b;cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:2px 7px">✏ Modifier</span>
+              <span style="font-size:8px;color:#dc2626;cursor:pointer;background:#fff5f5;border:1px solid #fecaca;border-radius:5px;padding:2px 7px">🗑 Suppr.</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#334155,#475569)"></div><div><div class="product-name">Nike Air Force 1 Noir</div><div class="product-sub">Sneakers · 38–45</div></div></div></td>
+          <td><span class="ref-badge">REF-AF1-NGR</span></td>
+          <td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">15</td><td class="num">60</td>
+          <td class="num">3 000</td>
+          <td class="num price">180 000</td>
+          <td class="num price">2 700 000</td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#d1fae5,#a7f3d0)"></div><div><div class="product-name">Adidas Stan Smith Vert</div><div class="product-sub">Sneakers · 36–44</div></div></div></td>
+          <td><span class="ref-badge">REF-SS-VRT</span></td>
+          <td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">18</td><td class="num">60</td>
+          <td class="num">2 667</td>
+          <td class="num price">160 000</td>
+          <td class="num price">2 550 000</td>
+        </tr>
+
+        <!-- Sous-totaux produits CMD-001 -->
+        <tr>
+          <td colspan="5" style="text-align:right;font-size:9px;color:#94a3b8;background:#fafafa;padding:4px 8px">Sous-total produits</td>
+          <td class="num" style="background:#fafafa;font-size:10px;font-weight:700">53</td><td style="background:#fafafa"></td><td style="background:#fafafa"></td>
+          <td class="num" style="background:#fafafa;font-weight:700">520 000 FCFA</td>
+          <td class="num" style="background:#fafafa;font-weight:800;color:#7c3aed;font-size:11px">8 850 000 FCFA</td>
+          <td style="background:#fafafa"></td>
+        </tr>
+
+        <!-- SECTION PAIEMENTS CMD-001 -->
+        <tr class="pay-section-header">
+          <td colspan="11">💳 PAIEMENTS (3 transactions) — Commande CMD-2026-09-01</td>
+        </tr>
+        <!-- En-têtes colonnes paiement -->
+        <tr style="background:#f5f3ff">
+          <td style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">#</td>
+          <td style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">Type</td>
+          <td colspan="2" style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">Note</td>
+          <td style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">Date</td>
+          <td style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">Heure</td>
+          <td colspan="2" class="num" style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">Montant payé</td>
+          <td colspan="2" class="num" style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">Reste après paiement</td>
+          <td></td>
+        </tr>
+        <!-- Paiement 1 -->
+        <tr class="pay-row">
+          <td style="font-size:9px;color:#94a3b8;padding-left:10px">1</td>
+          <td><span class="type-avance">Avance</span></td>
+          <td colspan="2" style="font-size:9px;color:#64748b;font-style:italic">Acompte initial</td>
+          <td class="date-cell">01 déc. 2025</td>
+          <td class="date-cell">18:20</td>
+          <td colspan="2" class="num amount-paid" style="font-size:11px">2 000 000 FCFA</td>
+          <td colspan="2" class="num amount-due" style="font-size:11px">6 850 000 FCFA</td>
+          <td style="text-align:center"><span style="font-size:8px;color:#dc2626;cursor:pointer">🗑</span></td>
+        </tr>
+        <!-- Paiement 2 -->
+        <tr class="pay-row">
+          <td style="font-size:9px;color:#94a3b8;padding-left:10px">2</td>
+          <td><span class="type-avance">Avance</span></td>
+          <td colspan="2" style="font-size:9px;color:#64748b;font-style:italic">2ème versement</td>
+          <td class="date-cell">15 déc. 2025</td>
+          <td class="date-cell">10:45</td>
+          <td colspan="2" class="num amount-paid" style="font-size:11px">3 425 000 FCFA</td>
+          <td colspan="2" class="num amount-due" style="font-size:11px">3 425 000 FCFA</td>
+          <td style="text-align:center"><span style="font-size:8px;color:#dc2626;cursor:pointer">🗑</span></td>
+        </tr>
+        <!-- Paiement 3 -->
+        <tr class="pay-row">
+          <td style="font-size:9px;color:#94a3b8;padding-left:10px">3</td>
+          <td><span class="type-solde">Solde</span></td>
+          <td colspan="2" style="font-size:9px;color:#64748b;font-style:italic">Paiement final</td>
+          <td class="date-cell">25 déc. 2025</td>
+          <td class="date-cell">12:20</td>
+          <td colspan="2" class="num amount-paid" style="font-size:11px">3 425 000 FCFA</td>
+          <td colspan="2" class="num amount-zero" style="font-size:11px">0 FCFA</td>
+          <td style="text-align:center"><span style="font-size:8px;color:#dc2626;cursor:pointer">🗑</span></td>
+        </tr>
+        <!-- Total paiements CMD-001 -->
+        <tr class="pay-total-row">
+          <td colspan="5"></td>
+          <td colspan="2" class="num" style="font-size:9px;color:#7c3aed">Total payé :</td>
+          <td colspan="2" class="num amount-paid" style="font-size:12px">8 850 000 FCFA</td>
+          <td colspan="2" style="text-align:right;padding-right:8px"><span class="solde-badge">✓ Soldé</span></td>
+        </tr>
+
+        <!-- CMD-002 : 2 produits, 2 paiements en cours -->
+        <tr class="group-sep">
+          <td rowspan="2" style="vertical-align:top;padding-top:8px">
+            <div class="order-cell">CMD-2026-09-02</div>
+            <div style="margin-top:5px"><span class="badge badge-amber">Partielle</span></div>
+            <div class="date-cell" style="margin-top:4px">21 déc. 2025</div>
+          </td>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"></div><div><div class="product-name">Converse Chuck 70 Ecru</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td rowspan="2" style="vertical-align:top;padding-top:8px;font-weight:600;font-size:10px">Hong Kong Trade</td>
+          <td><span class="ref-badge">REF-CT70-ECR</span></td>
+          <td class="date-cell">21 déc.<br>13:21</td>
+          <td class="num">14</td><td class="num">60</td>
+          <td class="num">2 583</td>
+          <td class="num price">155 000</td>
+          <td class="num price">2 170 000</td>
+          <td rowspan="2" style="text-align:center;vertical-align:middle">
+            <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+              <span style="font-size:8px;color:#7c3aed;cursor:pointer;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:2px 7px">👁 Voir</span>
+              <span style="font-size:8px;color:#64748b;cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:2px 7px">✏ Modifier</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#e0f2fe,#bae6fd)"></div><div><div class="product-name">Puma Suede Classic Gris</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-PS-GRS</span></td>
+          <td class="date-cell">21 déc.<br>13:21</td>
+          <td class="num">16</td><td class="num">60</td>
+          <td class="num">2 292</td>
+          <td class="num price">137 500</td>
+          <td class="num price">4 780 000</td>
+        </tr>
+        <tr>
+          <td colspan="5" style="text-align:right;font-size:9px;color:#94a3b8;background:#fafafa;padding:4px 8px">Sous-total produits</td>
+          <td class="num" style="background:#fafafa;font-weight:700">30</td><td style="background:#fafafa"></td><td style="background:#fafafa"></td>
+          <td class="num" style="background:#fafafa;font-weight:700">292 500 FCFA</td>
+          <td class="num" style="background:#fafafa;font-weight:800;color:#7c3aed;font-size:11px">6 950 000 FCFA</td>
+          <td style="background:#fafafa"></td>
+        </tr>
+        <!-- Paiements CMD-002 -->
+        <tr class="pay-section-header"><td colspan="11">💳 PAIEMENTS (2 transactions) — Commande CMD-2026-09-02</td></tr>
+        <tr style="background:#f5f3ff">
+          <td style="font-size:8px;font-weight:700;color:#7c3aed;padding:4px 6px">#</td>
+          <td style="font-size:8px;font-weight:700;color:#7c3aed">Type</td>
+          <td colspan="2" style="font-size:8px;font-weight:700;color:#7c3aed">Note</td>
+          <td style="font-size:8px;font-weight:700;color:#7c3aed">Date</td>
+          <td style="font-size:8px;font-weight:700;color:#7c3aed">Heure</td>
+          <td colspan="2" class="num" style="font-size:8px;font-weight:700;color:#7c3aed">Montant</td>
+          <td colspan="2" class="num" style="font-size:8px;font-weight:700;color:#7c3aed">Reste</td>
+          <td></td>
+        </tr>
+        <tr class="pay-row">
+          <td style="font-size:9px;color:#94a3b8;padding-left:10px">1</td>
+          <td><span class="type-avance">Avance</span></td>
+          <td colspan="2" style="font-size:9px;color:#64748b;font-style:italic">1er versement</td>
+          <td class="date-cell">22 déc. 2025</td><td class="date-cell">09:15</td>
+          <td colspan="2" class="num amount-paid" style="font-size:11px">2 000 000 FCFA</td>
+          <td colspan="2" class="num amount-due" style="font-size:11px">4 950 000 FCFA</td>
+          <td style="text-align:center"><span style="font-size:8px;color:#dc2626;cursor:pointer">🗑</span></td>
+        </tr>
+        <tr class="pay-row">
+          <td style="font-size:9px;color:#94a3b8;padding-left:10px">2</td>
+          <td><span class="type-avance">Avance</span></td>
+          <td colspan="2" style="font-size:9px;color:#64748b;font-style:italic">2ème versement</td>
+          <td class="date-cell">28 déc. 2025</td><td class="date-cell">14:30</td>
+          <td colspan="2" class="num amount-paid" style="font-size:11px">1 000 000 FCFA</td>
+          <td colspan="2" class="num amount-due" style="font-size:11px">3 950 000 FCFA</td>
+          <td style="text-align:center"><span style="font-size:8px;color:#dc2626;cursor:pointer">🗑</span></td>
+        </tr>
+        <tr class="pay-total-row">
+          <td colspan="5"></td>
+          <td colspan="2" class="num" style="font-size:9px;color:#7c3aed">Total payé :</td>
+          <td colspan="2" class="num amount-paid" style="font-size:12px">3 000 000 FCFA</td>
+          <td colspan="2" style="text-align:right;padding-right:8px"><span class="pending-badge">⚠ Reste 3 950 000 FCFA</span></td>
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ═══════════════════ PAGE 3 — OPTION B ════════════════════════════ -->
+<div class="page">
+  <div class="page-header">
+    <div>
+      <div class="option-badge" style="background:#2563eb">Option B</div>
+      <div class="option-title">Mini-tableau de paiements toujours visible sous les produits</div>
+      <div class="option-desc">Les produits s'affichent normalement. Juste en dessous, un mini-tableau dédié liste tous les paiements avec solde cumulatif. Design équilibré — tableau moins large.</div>
+    </div>
+    <div class="meta">Page 2 / 3</div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros"><h4>✓ Points forts</h4><ul>
+      <li>Tableau produits propre et lisible</li>
+      <li>Paiements clairement séparés mais toujours visibles</li>
+      <li>Parfait pour plusieurs paiements</li>
+      <li>Bouton "+ Ajouter" intuitif</li>
+    </ul></div>
+    <div class="cons"><h4>⚡ Points à noter</h4><ul>
+      <li>Deux tableaux imbriqués (légèrement plus complexe)</li>
+    </ul></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:95px">N°Commande</th>
+          <th>Produits</th>
+          <th>Fournisseur</th>
+          <th>Réf.</th>
+          <th>Date/Heure</th>
+          <th class="num">Cartons</th>
+          <th class="num">Unité</th>
+          <th class="num">Prix unité</th>
+          <th class="num">Prix carton</th>
+          <th class="num">Total produit</th>
+          <th class="num" style="width:110px">Total CMD</th>
+          <th style="width:70px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- CMD-001 produits -->
+        <tr class="group-sep">
+          <td rowspan="3" style="vertical-align:top;padding-top:8px"><div class="order-cell">CMD-2026-09-01</div><div style="margin-top:5px"><span class="badge badge-green">Complète</span></div><div class="date-cell" style="margin-top:4px">26 nov. 2025</div></td>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe)"></div><div><div class="product-name">Nike Air Force 1 Blanc</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td rowspan="3" style="vertical-align:top;padding-top:8px;font-weight:600">Guangzhou Shoes</td>
+          <td><span class="ref-badge">REF-AF1-BLC</span></td>
+          <td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">20</td><td class="num">60</td><td class="num">3 000</td>
+          <td class="num price">180 000</td><td class="num price">3 600 000</td>
+          <td rowspan="3" class="num" style="vertical-align:middle;font-size:12px;font-weight:800;color:#7c3aed">8 850 000 FCFA</td>
+          <td rowspan="3" style="vertical-align:middle;text-align:center">
+            <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+              <span style="font-size:8px;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:2px 7px;cursor:pointer">👁 Voir</span>
+              <span style="font-size:8px;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:2px 7px;cursor:pointer">✏ Modifier</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#334155,#475569)"></div><div><div class="product-name">Nike Air Force 1 Noir</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-AF1-NGR</span></td><td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">15</td><td class="num">60</td><td class="num">3 000</td><td class="num price">180 000</td><td class="num price">2 700 000</td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#d1fae5,#a7f3d0)"></div><div><div class="product-name">Adidas Stan Smith Vert</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-SS-VRT</span></td><td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">18</td><td class="num">60</td><td class="num">2 667</td><td class="num price">160 000</td><td class="num price">2 550 000</td>
+        </tr>
+        <!-- Mini-tableau paiements CMD-001 -->
+        <tr>
+          <td colspan="12" style="padding:0">
+            <div class="pay-mini-wrap">
+              <div class="pay-mini-header">💳 Paiements effectués <span style="background:#7c3aed;color:white;border-radius:10px;padding:1px 7px;font-size:8px;margin-left:4px">3</span></div>
+              <table class="pay-mini-table">
+                <thead><tr>
+                  <th style="width:30px">#</th><th>Type</th><th>Note</th><th>Date</th><th>Heure</th>
+                  <th class="num">Montant payé</th><th class="num">Reste après paiement</th><th style="width:30px"></th>
+                </tr></thead>
+                <tbody>
+                  <tr>
+                    <td style="color:#94a3b8">1</td><td><span class="type-avance">Avance</span></td>
+                    <td style="color:#64748b;font-style:italic">Acompte initial</td><td class="date-cell">01 déc. 2025</td><td class="date-cell">18:20</td>
+                    <td class="num amount-paid" style="font-size:11px">2 000 000 FCFA</td>
+                    <td class="num amount-due" style="font-size:11px">6 850 000 FCFA</td>
+                    <td style="text-align:center;font-size:9px;color:#dc2626;cursor:pointer">🗑</td>
+                  </tr>
+                  <tr>
+                    <td style="color:#94a3b8">2</td><td><span class="type-avance">Avance</span></td>
+                    <td style="color:#64748b;font-style:italic">2ème versement</td><td class="date-cell">15 déc. 2025</td><td class="date-cell">10:45</td>
+                    <td class="num amount-paid" style="font-size:11px">3 425 000 FCFA</td>
+                    <td class="num amount-due" style="font-size:11px">3 425 000 FCFA</td>
+                    <td style="text-align:center;font-size:9px;color:#dc2626;cursor:pointer">🗑</td>
+                  </tr>
+                  <tr>
+                    <td style="color:#94a3b8">3</td><td><span class="type-solde">Solde</span></td>
+                    <td style="color:#64748b;font-style:italic">Paiement final</td><td class="date-cell">25 déc. 2025</td><td class="date-cell">12:20</td>
+                    <td class="num amount-paid" style="font-size:11px">3 425 000 FCFA</td>
+                    <td class="num amount-zero" style="font-size:11px">0 FCFA</td>
+                    <td style="text-align:center;font-size:9px;color:#dc2626;cursor:pointer">🗑</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="pay-mini-footer">
+                <span style="font-weight:700;color:#15803d">Total payé : 8 850 000 FCFA</span>
+                <span class="solde-badge">✓ Soldé</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <!-- CMD-002 -->
+        <tr class="group-sep">
+          <td rowspan="2" style="vertical-align:top;padding-top:8px"><div class="order-cell">CMD-2026-09-02</div><div style="margin-top:5px"><span class="badge badge-amber">Partielle</span></div><div class="date-cell" style="margin-top:4px">21 déc. 2025</div></td>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"></div><div><div class="product-name">Converse Chuck 70 Ecru</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td rowspan="2" style="vertical-align:top;padding-top:8px;font-weight:600">Hong Kong Trade</td>
+          <td><span class="ref-badge">REF-CT70-ECR</span></td><td class="date-cell">21 déc.<br>13:21</td>
+          <td class="num">14</td><td class="num">60</td><td class="num">2 583</td><td class="num price">155 000</td><td class="num price">2 170 000</td>
+          <td rowspan="2" class="num" style="vertical-align:middle;font-size:12px;font-weight:800;color:#7c3aed">6 950 000 FCFA</td>
+          <td rowspan="2" style="vertical-align:middle;text-align:center">
+            <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+              <span style="font-size:8px;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:2px 7px;cursor:pointer">👁 Voir</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#e0f2fe,#bae6fd)"></div><div><div class="product-name">Puma Suede Classic Gris</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-PS-GRS</span></td><td class="date-cell">21 déc.<br>13:21</td>
+          <td class="num">16</td><td class="num">60</td><td class="num">2 292</td><td class="num price">137 500</td><td class="num price">4 780 000</td>
+        </tr>
+        <!-- Mini-tableau paiements CMD-002 -->
+        <tr>
+          <td colspan="12" style="padding:0">
+            <div class="pay-mini-wrap">
+              <div class="pay-mini-header">💳 Paiements effectués <span style="background:#f59e0b;color:white;border-radius:10px;padding:1px 7px;font-size:8px;margin-left:4px">2</span>
+                <span style="margin-left:auto;font-size:8px;background:#7c3aed;color:white;border-radius:5px;padding:2px 8px;cursor:pointer">+ Ajouter un paiement</span>
+              </div>
+              <table class="pay-mini-table">
+                <thead><tr>
+                  <th style="width:30px">#</th><th>Type</th><th>Note</th><th>Date</th><th>Heure</th>
+                  <th class="num">Montant payé</th><th class="num">Reste après paiement</th><th style="width:30px"></th>
+                </tr></thead>
+                <tbody>
+                  <tr>
+                    <td style="color:#94a3b8">1</td><td><span class="type-avance">Avance</span></td>
+                    <td style="color:#64748b;font-style:italic">1er versement</td><td class="date-cell">22 déc. 2025</td><td class="date-cell">09:15</td>
+                    <td class="num amount-paid" style="font-size:11px">2 000 000 FCFA</td>
+                    <td class="num amount-due" style="font-size:11px">4 950 000 FCFA</td>
+                    <td style="text-align:center;font-size:9px;color:#dc2626;cursor:pointer">🗑</td>
+                  </tr>
+                  <tr>
+                    <td style="color:#94a3b8">2</td><td><span class="type-avance">Avance</span></td>
+                    <td style="color:#64748b;font-style:italic">2ème versement</td><td class="date-cell">28 déc. 2025</td><td class="date-cell">14:30</td>
+                    <td class="num amount-paid" style="font-size:11px">1 000 000 FCFA</td>
+                    <td class="num amount-due" style="font-size:11px">3 950 000 FCFA</td>
+                    <td style="text-align:center;font-size:9px;color:#dc2626;cursor:pointer">🗑</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="pay-mini-footer pay-mini-footer-pending">
+                <span style="font-weight:700;color:#d97706">Total payé : 3 000 000 FCFA</span>
+                <span class="pending-badge">⚠ Reste : 3 950 000 FCFA</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ═══════════════════ PAGE 4 — OPTION C ════════════════════════════ -->
+<div class="page">
+  <div class="page-header">
+    <div>
+      <div class="option-badge" style="background:#16a34a">Option C</div>
+      <div class="option-title">Colonne carte paiement avec liste déroulante</div>
+      <div class="option-desc">Une colonne dédiée à droite affiche une carte avec tous les paiements listés + barre de progression + reste à payer. Très compact et moderne.</div>
+    </div>
+    <div class="meta">Page 3 / 3</div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros"><h4>✓ Points forts</h4><ul>
+      <li>Tableau le plus compact</li>
+      <li>Barre de progression visuelle intuitive</li>
+      <li>Tous les paiements dans une carte claire</li>
+      <li>Design le plus moderne</li>
+    </ul></div>
+    <div class="cons"><h4>⚡ Points à noter</h4><ul>
+      <li>Moins adapté à l'export/impression</li>
+      <li>Carte peut être chargée si beaucoup de paiements</li>
+    </ul></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:95px">N°Commande</th>
+          <th>Produits</th>
+          <th>Fournisseur</th>
+          <th>Réf.</th>
+          <th>Date/Heure</th>
+          <th class="num">Cartons</th>
+          <th class="num">Unité</th>
+          <th class="num">Prix unité</th>
+          <th class="num">Prix carton</th>
+          <th class="num">Total produit</th>
+          <th style="width:200px;color:#7c3aed">Paiements</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- CMD-001 -->
+        <tr class="group-sep">
+          <td rowspan="3" style="vertical-align:top;padding-top:8px"><div class="order-cell">CMD-2026-09-01</div><div style="margin-top:5px"><span class="badge badge-green">Complète</span></div><div class="date-cell" style="margin-top:4px">26 nov. 2025</div></td>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe)"></div><div><div class="product-name">Nike Air Force 1 Blanc</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td rowspan="3" style="vertical-align:top;padding-top:8px;font-weight:600">Guangzhou Shoes</td>
+          <td><span class="ref-badge">REF-AF1-BLC</span></td><td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">20</td><td class="num">60</td><td class="num">3 000</td><td class="num price">180 000</td><td class="num price">3 600 000</td>
+          <td rowspan="3" style="vertical-align:middle;padding:8px">
+            <div class="pay-card">
+              <div class="pay-card-title">💳 Paiements · 3 transactions</div>
+              <div class="pay-card-item">
+                <span class="pay-card-label"><span class="type-avance" style="margin-right:4px">Avance</span> 01 déc. 18:20</span>
+                <span class="pay-card-val amount-paid">2 000 000</span>
+              </div>
+              <div class="pay-card-item">
+                <span class="pay-card-label"><span class="type-avance" style="margin-right:4px">Avance</span> 15 déc. 10:45</span>
+                <span class="pay-card-val amount-paid">3 425 000</span>
+              </div>
+              <div class="pay-card-item">
+                <span class="pay-card-label"><span class="type-solde" style="margin-right:4px">Solde</span> 25 déc. 12:20</span>
+                <span class="pay-card-val amount-paid">3 425 000</span>
+              </div>
+              <div class="pay-card-sep"></div>
+              <div class="prog-bar"><div class="prog-fill-green" style="width:100%"></div></div>
+              <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:8px">
+                <span style="color:#16a34a;font-weight:700">Payé : 8 850 000</span>
+                <span style="color:#94a3b8">Reste : 0</span>
+              </div>
+              <div style="margin-top:6px;text-align:center"><span class="solde-badge">✓ Soldé</span></div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#334155,#475569)"></div><div><div class="product-name">Nike Air Force 1 Noir</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-AF1-NGR</span></td><td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">15</td><td class="num">60</td><td class="num">3 000</td><td class="num price">180 000</td><td class="num price">2 700 000</td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#d1fae5,#a7f3d0)"></div><div><div class="product-name">Adidas Stan Smith Vert</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-SS-VRT</span></td><td class="date-cell">26 nov.<br>13:21</td>
+          <td class="num">18</td><td class="num">60</td><td class="num">2 667</td><td class="num price">160 000</td><td class="num price">2 550 000</td>
+        </tr>
+
+        <!-- CMD-002 -->
+        <tr class="group-sep">
+          <td rowspan="2" style="vertical-align:top;padding-top:8px"><div class="order-cell">CMD-2026-09-02</div><div style="margin-top:5px"><span class="badge badge-amber">Partielle</span></div><div class="date-cell" style="margin-top:4px">21 déc. 2025</div></td>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"></div><div><div class="product-name">Converse Chuck 70 Ecru</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td rowspan="2" style="vertical-align:top;padding-top:8px;font-weight:600">Hong Kong Trade</td>
+          <td><span class="ref-badge">REF-CT70-ECR</span></td><td class="date-cell">21 déc.<br>13:21</td>
+          <td class="num">14</td><td class="num">60</td><td class="num">2 583</td><td class="num price">155 000</td><td class="num price">2 170 000</td>
+          <td rowspan="2" style="vertical-align:middle;padding:8px">
+            <div class="pay-card" style="border-color:#fde68a">
+              <div class="pay-card-title" style="color:#b45309">💳 Paiements · 2 transactions</div>
+              <div class="pay-card-item">
+                <span class="pay-card-label"><span class="type-avance" style="margin-right:4px">Avance</span> 22 déc. 09:15</span>
+                <span class="pay-card-val amount-paid">2 000 000</span>
+              </div>
+              <div class="pay-card-item">
+                <span class="pay-card-label"><span class="type-avance" style="margin-right:4px">Avance</span> 28 déc. 14:30</span>
+                <span class="pay-card-val amount-paid">1 000 000</span>
+              </div>
+              <div style="margin:4px 0;font-size:8px;color:#94a3b8;text-align:center;border:1px dashed #fde68a;border-radius:4px;padding:3px;cursor:pointer">+ Ajouter un paiement</div>
+              <div class="pay-card-sep"></div>
+              <div class="prog-bar"><div class="prog-fill-amber" style="width:43%"></div></div>
+              <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:8px">
+                <span style="color:#d97706;font-weight:700">Payé : 3 000 000</span>
+                <span style="color:#dc2626;font-weight:700">Reste : 3 950 000</span>
+              </div>
+              <div style="margin-top:6px;text-align:center"><span class="pending-badge">⚠ En cours</span></div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><div style="display:flex;align-items:center"><div class="thumb" style="background:linear-gradient(135deg,#e0f2fe,#bae6fd)"></div><div><div class="product-name">Puma Suede Classic Gris</div><div class="product-sub">Sneakers</div></div></div></td>
+          <td><span class="ref-badge">REF-PS-GRS</span></td><td class="date-cell">21 déc.<br>13:21</td>
+          <td class="num">16</td><td class="num">60</td><td class="num">2 292</td><td class="num price">137 500</td><td class="num price">4 780 000</td>
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+
+  <div class="recommendation">
+    <h3>💡 Recommandation finale</h3>
+    <p>
+      Avec plusieurs paiements par commande, <b>Option B</b> est la meilleure : le mini-tableau de paiements est toujours visible, chaque transaction est clairement listée avec son solde cumulatif, et le bouton "+ Ajouter" est intuitif.
+      <b>Option A</b> convient mieux si le client veut une vue comptable stricte dans un seul tableau.
+      <b>Option C</b> est idéale pour une app mobile ou un tableau de bord épuré.
+      <br><br>
+      → Soumettez au client, puis confirmez le choix pour commencer le développement sur la branche <b>feature/payment-columns-inline</b>.
+    </p>
+  </div>
+</div>
+
+</body>
+</html>
