@@ -4,6 +4,21 @@ interface StockForecastItem    { productId: string; totalPairs: number; dailySal
 interface ReceivableItem       { customerId: string; customerName: string; customerPhone: string | null; totalDue: number; salesCount: number }
 interface LowStockItem         { productId: string; productName: string; reference: string; totalPairs: number; threshold: number }
 interface SupplierPayableItem  { orderId: string; reference: string; supplierId: string; supplierName: string | null; totalCostFcfa: number; paidAmountFcfa: number; orderDate: string; status: string }
+interface SyncSummary {
+  success:    boolean
+  online:     boolean
+  configured: boolean
+  pushed:     number
+  pulled:     number
+  errors:     string[]
+  reason?:    'not_configured' | 'offline' | 'already_running'
+}
+interface SyncStatus {
+  online:       boolean
+  configured:   boolean
+  lastSyncedAt: string | null
+  pending:      number
+}
 
 declare interface Window {
   api: {
@@ -105,6 +120,14 @@ declare interface Window {
       check:   () => Promise<{ ok: boolean; version?: string | null; error?: string }>
       install: () => Promise<void>
       on: (channel: string, cb: (payload: unknown) => void) => (() => void)
+    }
+    sync: {
+      now:            () => Promise<SyncSummary>
+      getStatus:      () => Promise<SyncStatus>
+      configure:      (data: { apiUrl: string; email: string; password: string }) => Promise<{ success: boolean; message?: string }>
+      getConfig:      () => Promise<{ apiUrl: string; email: string; configured: boolean } | null>
+      getDevDefaults: () => Promise<{ apiUrl: string; email: string; password: string }>
+      logout:         () => Promise<{ success: boolean }>
     }
   }
 }

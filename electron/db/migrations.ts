@@ -236,6 +236,12 @@ export function runMigrations(sqlite: Database.Database): void {
       deleted_at   TEXT
     );
 
+    -- ─── Synchronisation offline-first : état local (clé/valeur) ───────────
+    CREATE TABLE IF NOT EXISTS sync_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    );
+
     -- ─── Colonnes ajoutées après déploiement initial ──────────────────────
     -- Ces ALTER TABLE sont idempotents : si la colonne existe déjà, SQLite ignore.
 

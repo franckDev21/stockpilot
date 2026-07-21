@@ -114,6 +114,15 @@ const api = {
     toPDF: (options?: { filename?: string }): Promise<{ success: boolean; path?: string }> => invoke('print:toPDF', options),
   },
 
+  sync: {
+    now:            () => invoke('sync:now'),
+    getStatus:      () => invoke('sync:getStatus'),
+    configure:      (data: { apiUrl: string; email: string; password: string }) => invoke('sync:configure', data),
+    getConfig:      () => invoke('sync:getConfig'),
+    getDevDefaults: () => invoke('sync:getDevDefaults'),
+    logout:         () => invoke('sync:logout'),
+  },
+
   update: {
     check:   (): Promise<{ ok: boolean; version?: string | null; error?: string }> => invoke('update:check'),
     install: (): Promise<void> => invoke('update:install'),

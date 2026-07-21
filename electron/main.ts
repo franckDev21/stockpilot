@@ -17,6 +17,8 @@ import { registerSeedHandlers }          from './handlers/seed.handler'
 import { registerBackupHandlers }        from './handlers/backup.handler'
 import { registerPrintHandlers }         from './handlers/print.handler'
 import { registerAuthHandlers }          from './handlers/auth.handler'
+import { registerSyncHandlers }          from './handlers/sync.handler'
+import { runSync }                       from './services/sync.service'
 import { setupAutoUpdate }                from './updater'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -49,6 +51,18 @@ function registerAllHandlers(): void {
   registerBackupHandlers(ipcMain)
   registerPrintHandlers(ipcMain)
   registerAuthHandlers(ipcMain)
+  registerSyncHandlers(ipcMain)
+}
+
+// Synchro périodique en arrière-plan — tente une synchro toutes les 3 minutes
+// si l'app est configurée pour parler à l'API. Ne bloque jamais l'utilisateur :
+// les erreurs réseau sont avalées par runSync() lui-même.
+const SYNC_INTERVAL_MS = 3 * 60 * 1000
+
+function startPeriodicSync(): void {
+  setInterval(() => {
+    runSync().catch(() => { /* runSync() ne rejette jamais, filet de sécurité */ })
+  }, SYNC_INTERVAL_MS)
 }
 
 function createWindow(): void {
@@ -92,4 +106,7 @@ app.whenReady().then(() => {
   initDatabase()
   registerAllHandlers()
   createWindow()
+  startPeriodicSync()
+  // Première tentative de synchro peu après le démarrage (best-effort, silencieux)
+  runSync().catch(() => {})
 })

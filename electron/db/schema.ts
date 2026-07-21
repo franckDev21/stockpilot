@@ -239,3 +239,12 @@ export const salePayments = sqliteTable('sale_payments', {
   notes:       text('notes'),
   ...timestamps,
 })
+
+// ─── Synchronisation offline-first (état local de synchro avec l'API) ────────
+// Table clé/valeur légère : lastSyncedAt, etc. L'URL API + le token Sanctum
+// sont stockés séparément dans userData/sync-config.json (comme session.json).
+
+export const syncMeta = sqliteTable('sync_meta', {
+  key:   text('key').primaryKey(),
+  value: text('value'),
+})

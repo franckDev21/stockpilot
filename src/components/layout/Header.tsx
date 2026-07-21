@@ -5,6 +5,7 @@ import { useAuthStore }          from '@/store/auth-store'
 import { usePrint }              from '@/hooks/usePrint'
 import { useDarkMode }           from '@/hooks/useDarkMode'
 import { formatDate }            from '@/lib/utils'
+import { SyncStatus }            from './SyncStatus'
 
 interface LowStockItem { productId: string; productName: string; reference: string; totalPairs: number; threshold: number }
 
@@ -113,6 +114,9 @@ export function Header() {
 
         {/* Right side */}
         <div className="flex items-center gap-2">
+
+          {/* Synchronisation avec l'API en ligne */}
+          <SyncStatus />
 
           {/* Low stock alert badge */}
           {lowItems.length > 0 && (
