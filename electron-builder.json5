@@ -23,7 +23,8 @@
     {
       "provider": "github",
       "owner": "franckDev21",
-      "repo": "stockpilot"
+      "repo": "stockpilot",
+      "releaseType": "release"
     }
   ],
   "mac": {
