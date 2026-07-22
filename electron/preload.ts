@@ -49,6 +49,7 @@ const api = {
   purchaseOrders: {
     getAll:         ()                           => invoke('purchaseOrders:getAll'),
     getById:        (id: string)                 => invoke('purchaseOrders:getById', id),
+    getForEdit:     (id: string)                 => invoke('purchaseOrders:getForEdit', id),
     create:         (data: unknown)              => invoke('purchaseOrders:create', data),
     update:         (id: string, data: unknown)  => invoke('purchaseOrders:update', id, data),
     delete:         (id: string)                 => invoke('purchaseOrders:delete', id),

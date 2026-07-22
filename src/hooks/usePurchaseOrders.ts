@@ -28,7 +28,7 @@ export function usePurchaseOrders() {
     await fetchAll()
   }, [fetchAll])
 
-  const update = useCallback(async (id: string, data: Partial<PurchaseOrder>) => {
+  const update = useCallback(async (id: string, data: unknown) => {
     await window.api.purchaseOrders.update(id, data)
     await fetchAll()
   }, [fetchAll])

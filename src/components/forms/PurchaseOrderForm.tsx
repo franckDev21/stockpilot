@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { Plus, Trash2, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Lock, Loader2 } from 'lucide-react'
 import { usePurchaseOrders } from '@/hooks/usePurchaseOrders'
 import { useProducts } from '@/hooks/useProducts'
 import { useSuppliers } from '@/hooks/useSuppliers'
@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
-import { formatFcfa } from '@/lib/utils'
+import { cleanIpcError, formatFcfa } from '@/lib/utils'
 
 // ─── Local types ─────────────────────────────────────────────────────────────
 
@@ -15,6 +15,10 @@ interface SizeRow { size: string; pairsCount: string }
 
 interface ItemState {
   _key:                  string
+  /** Id en base : absent pour une ligne ajoutée dans le formulaire. */
+  _id?:                  string
+  /** > 0 ⇒ ligne déjà réceptionnée, donc partiellement verrouillée. */
+  receivedCartons:       number
   productId:             string
   cartonsOrdered:        string
   pairsPerCarton:        string
@@ -23,6 +27,28 @@ interface ItemState {
   notes:                 string
   sizes:                 SizeRow[]
   expanded:              boolean
+}
+
+/** Forme renvoyée par purchaseOrders.getForEdit. */
+interface EditableOrder {
+  supplierId:                      string
+  orderDate:                       string
+  expectedDeliveryDate:            string | null
+  freightCostFcfa:                 number | null
+  customsCostFcfa:                 number | null
+  otherCostsFcfa:                  number | null
+  simulatedSalePricePerCartonFcfa: number | null
+  notes:                           string | null
+  items: Array<{
+    id:                    string
+    productId:             string
+    cartonsOrdered:        number
+    pairsPerCarton:        number
+    unitCostPerCartonFcfa: number
+    notes:                 string | null
+    receivedCartons:       number
+    sizes:                 Array<{ size: string; pairsCount: number }>
+  }>
 }
 
 interface FormState {
@@ -40,6 +66,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 
 const EMPTY_ITEM = (): ItemState => ({
   _key:                  crypto.randomUUID(),
+  receivedCartons:       0,
   productId:             '',
   cartonsOrdered:        '',
   pairsPerCarton:        '',
@@ -78,18 +105,82 @@ function Divider() {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 interface PurchaseOrderFormProps {
+  /** Fourni ⇒ mode édition : la commande est chargée puis mise à jour. */
+  orderId?:  string
   onSuccess: () => void
 }
 
-export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
-  const { create }    = usePurchaseOrders()
+export function PurchaseOrderForm({ orderId, onSuccess }: PurchaseOrderFormProps) {
+  const { create, update } = usePurchaseOrders()
   const { products }  = useProducts()
   const { suppliers } = useSuppliers()
+
+  const isEdit = !!orderId
 
   const [form, setForm]   = useState<FormState>(EMPTY_FORM)
   const [items, setItems] = useState<ItemState[]>([EMPTY_ITEM()])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
+  const [prefilling, setPrefilling] = useState(isEdit)
+
+  // ── Préchargement (mode édition) ─────────────────────────────────────────
+  useEffect(() => {
+    if (!orderId) return
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const order = (await window.api.purchaseOrders.getForEdit(orderId)) as EditableOrder | null
+        if (cancelled) return
+        if (!order) {
+          setErrors({ _form: "Cette commande est introuvable." })
+          return
+        }
+
+        setForm({
+          supplierId:                      order.supplierId,
+          orderDate:                       order.orderDate,
+          expectedDeliveryDate:            order.expectedDeliveryDate ?? '',
+          freightCostFcfa:                 order.freightCostFcfa  ? String(order.freightCostFcfa)  : '',
+          customsCostFcfa:                 order.customsCostFcfa  ? String(order.customsCostFcfa)  : '',
+          otherCostsFcfa:                  order.otherCostsFcfa   ? String(order.otherCostsFcfa)   : '',
+          simulatedSalePricePerCartonFcfa: order.simulatedSalePricePerCartonFcfa
+            ? String(order.simulatedSalePricePerCartonFcfa)
+            : '',
+          notes:                           order.notes ?? '',
+        })
+
+        setItems(
+          order.items.length === 0
+            ? [EMPTY_ITEM()]
+            : order.items.map((it) => ({
+                _key:            crypto.randomUUID(),
+                _id:             it.id,
+                receivedCartons: it.receivedCartons,
+                productId:       it.productId,
+                cartonsOrdered:  String(it.cartonsOrdered),
+                pairsPerCarton:  String(it.pairsPerCarton),
+                // Le prix à la paire n'est pas stocké : on le redérive du coût carton.
+                unitPriceFcfa:   it.pairsPerCarton > 0
+                  ? String(Math.round(it.unitCostPerCartonFcfa / it.pairsPerCarton))
+                  : '',
+                unitCostPerCartonFcfa: String(it.unitCostPerCartonFcfa),
+                notes:           it.notes ?? '',
+                sizes:           it.sizes.length > 0
+                  ? it.sizes.map((s) => ({ size: s.size, pairsCount: String(s.pairsCount) }))
+                  : [{ size: '', pairsCount: '' }],
+                expanded:        false,
+              })),
+        )
+      } catch (err) {
+        if (!cancelled) setErrors({ _form: cleanIpcError(err, 'Impossible de charger la commande') })
+      } finally {
+        if (!cancelled) setPrefilling(false)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [orderId])
 
   const setField = useCallback(
     (key: keyof FormState) =>
@@ -187,7 +278,10 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
       if (!Number(it.cartonsOrdered)) e[`item_${i}_cartons`]  = 'Nombre requis'
       if (!perCarton)                e[`item_${i}_pairs`]    = 'Paires/carton requis'
       if (!Number(it.unitCostPerCartonFcfa)) e[`item_${i}_cost`] = 'Prix requis'
-      
+
+      if (it.receivedCartons > 0 && Number(it.cartonsOrdered) < it.receivedCartons) {
+        e[`item_${i}_cartons`] = `${it.receivedCartons} déjà reçu(s)`
+      }
     })
     
     setErrors(e)
@@ -201,7 +295,7 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
     if (!validate()) return
     setLoading(true)
     try {
-      await create({
+      const payload = {
         supplierId:            form.supplierId,
         orderDate:             form.orderDate,
         expectedDeliveryDate:  form.expectedDeliveryDate || null,
@@ -211,9 +305,10 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
         otherCostsFcfa:        others,
         simulatedSalePricePerCartonFcfa: salePrice || null,
         notes:                 form.notes.trim() || null,
-        status:                'draft',
-        deletedAt:             null,
         items: items.map((it) => ({
+          // Conservé en édition pour que le service mette à jour la ligne
+          // existante au lieu d'en créer une nouvelle.
+          ...(it._id ? { id: it._id } : {}),
           productId:             it.productId,
           cartonsOrdered:        Number(it.cartonsOrdered),
           pairsPerCarton:        Number(it.pairsPerCarton),
@@ -223,11 +318,16 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
             .filter((s) => s.size.trim() && Number(s.pairsCount) > 0)
             .map((s) => ({ size: s.size.trim(), pairsCount: Number(s.pairsCount) })),
         })),
-      })
+      }
+
+      if (isEdit && orderId) {
+        await update(orderId, payload)
+      } else {
+        await create({ ...payload, status: 'draft', deletedAt: null })
+      }
       onSuccess()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setErrors({ _form: msg || 'Une erreur est survenue, veuillez réessayer' })
+      setErrors({ _form: cleanIpcError(err) })
       console.error('Erreur commande:', err)
     } finally {
       setLoading(false)
@@ -240,6 +340,15 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
   const productOptions  = products.map((p) => ({ value: p.id, label: `${p.reference} — ${p.name}` }))
 
   // ── Render ───────────────────────────────────────────────────────────────
+
+  if (prefilling) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Chargement de la commande…
+      </div>
+    )
+  }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-0">
@@ -291,6 +400,9 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
           const perCarton = Number(item.pairsPerCarton) || 0
           const assigned  = item.sizes.reduce((sum, srow) => sum + (Number(srow.pairsCount) || 0), 0)
           const diff      = perCarton - assigned
+          // Une ligne déjà réceptionnée porte des mouvements de stock : elle ne
+          // peut être ni supprimée, ni réaffectée à un autre produit.
+          const isLocked  = item.receivedCartons > 0
 
           return (
             <div key={item._key} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
@@ -302,6 +414,15 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
                     ? (products.find((p) => p.id === item.productId)?.name ?? '…')
                     : 'Nouveau produit'}
                 </span>
+                {isLocked && (
+                  <span
+                    title="Cette ligne a déjà été réceptionnée : le produit ne peut plus être changé et la ligne ne peut plus être supprimée."
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 text-[10px] font-semibold"
+                  >
+                    <Lock className="w-3 h-3" />
+                    {item.receivedCartons} reçu{item.receivedCartons > 1 ? 's' : ''}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleExpand(item._key)}
@@ -309,7 +430,7 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
                 >
                   {item.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
-                {items.length > 1 && (
+                {items.length > 1 && !isLocked && (
                   <button
                     type="button"
                     onClick={() => removeItem(item._key)}
@@ -322,6 +443,15 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
 
               {item.expanded && (
                 <div className="p-4 flex flex-col gap-3">
+                  {isLocked && (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+                      {item.receivedCartons} carton{item.receivedCartons > 1 ? 's' : ''} déjà
+                      réceptionné{item.receivedCartons > 1 ? 's' : ''} sur cette ligne. Le produit ne
+                      peut plus être changé et la quantité ne peut pas descendre en dessous.
+                      Les prix et pointures restent modifiables.
+                    </p>
+                  )}
+
                   <Select
                     label="Produit"
                     options={productOptions}
@@ -329,13 +459,14 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
                     onChange={(e) => updateItem(item._key, 'productId', e.target.value)}
                     error={errors[`item_${idx}_product`]}
                     placeholder="Choisir un modèle…"
+                    disabled={isLocked}
                   />
 
                   <div className="grid grid-cols-4 gap-2">
                     <Input
                       label="Cartons"
                       type="number"
-                      min="1"
+                      min={isLocked ? String(item.receivedCartons) : '1'}
                       placeholder="10"
                       value={item.cartonsOrdered}
                       onChange={(e) => updateItem(item._key, 'cartonsOrdered', e.target.value)}
@@ -561,7 +692,9 @@ export function PurchaseOrderForm({ onSuccess }: PurchaseOrderFormProps) {
       {/* ── Actions ─────────────────────────────────────────────── */}
       <div className="flex gap-2 justify-end pt-4 mt-4 border-t border-slate-100">
         <Button type="button" variant="secondary" onClick={onSuccess}>Annuler</Button>
-        <Button type="submit" loading={loading}>Créer la commande</Button>
+        <Button type="submit" loading={loading}>
+          {isEdit ? 'Enregistrer les modifications' : 'Créer la commande'}
+        </Button>
       </div>
     </form>
   )

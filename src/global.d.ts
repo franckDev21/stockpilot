@@ -61,6 +61,7 @@ declare interface Window {
     purchaseOrders: {
       getAll:         () => Promise<unknown[]>
       getById:        (id: string) => Promise<unknown>
+      getForEdit:     (id: string) => Promise<unknown>
       create:         (data: unknown) => Promise<unknown>
       update:         (id: string, data: unknown) => Promise<unknown>
       delete:         (id: string) => Promise<void>

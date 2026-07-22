@@ -26,6 +26,7 @@ const CONFIGS: Record<string, DrawerConfig> = {
   'create-warehouse': { title: 'Nouvelle boutique',         subtitle: 'Boutique ou entrepôt central',            width: 'md' },
   'edit-warehouse':   { title: 'Modifier la boutique',      subtitle: 'Mettez à jour les informations',          width: 'md' },
   'create-order':     { title: 'Nouvelle commande',         subtitle: 'Articles, coûts et simulation de profit', width: 'xl' },
+  'edit-order':       { title: 'Modifier la commande',      subtitle: 'Articles, coûts et simulation de profit', width: 'xl' },
   'pay-order':          { title: 'Enregistrer un paiement',   subtitle: 'Acompte, solde ou paiement intégral',     width: 'md' },
   'create-reception':   { title: 'Nouvelle réception',        subtitle: 'Marchandise reçue du fournisseur',          width: 'lg' },
   'create-transfer':    { title: 'Nouveau transfert',          subtitle: 'Réapprovisionner une boutique',             width: 'lg' },
@@ -50,6 +51,7 @@ export function DrawerRouter() {
       case 'create-warehouse':return <WarehouseForm onSuccess={onSuccess} />
       case 'edit-warehouse':  return <WarehouseForm data={data as Warehouse}      onSuccess={onSuccess} />
       case 'create-order':    return <PurchaseOrderForm                           onSuccess={onSuccess} />
+      case 'edit-order':      return <PurchaseOrderForm orderId={(data as PurchaseOrder).id} onSuccess={onSuccess} />
       case 'pay-order':         return <OrderPaymentForm orderId={(data as PurchaseOrder).id} onSuccess={onSuccess} />
       case 'create-reception':  return <ReceptionForm onSuccess={onSuccess} />
       case 'create-transfer':   return <TransferForm  onSuccess={onSuccess} />
