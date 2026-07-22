@@ -22,7 +22,10 @@ export function runMigrations(sqlite: Database.Database): void {
     -- ─── Produits ──────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS products (
       id              TEXT PRIMARY KEY,
-      reference       TEXT NOT NULL UNIQUE,
+      -- Unicité assurée par l'index partiel products_ref_active_unique
+      -- (voir migrateProductReferenceUnique) : une référence est libérée
+      -- quand le produit est supprimé.
+      reference       TEXT NOT NULL,
       name            TEXT NOT NULL,
       brand           TEXT,
       category        TEXT,
@@ -286,4 +289,91 @@ export function runMigrations(sqlite: Database.Database): void {
   for (const sql of alterMigrations) {
     try { sqlite.exec(sql) } catch { /* column already exists — ignore */ }
   }
+
+  migrateProductReferenceUnique(sqlite)
+}
+
+/**
+ * `products.reference` was created as `TEXT NOT NULL UNIQUE`, a table-level
+ * constraint that also covers soft-deleted rows. A user who deleted a product
+ * could therefore never reuse its reference — the row is hidden from the UI
+ * but still occupies the reference, and the insert failed with a raw SQLite
+ * error.
+ *
+ * We replace it with a *partial* unique index restricted to active rows, so a
+ * reference is released as soon as its product is deleted. SQLite cannot drop
+ * a column constraint in place, so the table has to be rebuilt.
+ *
+ * Idempotent: the rebuild only runs while the old UNIQUE constraint is still
+ * present in the stored DDL.
+ */
+function migrateProductReferenceUnique(sqlite: Database.Database): void {
+  const row = sqlite
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'products'`)
+    .get() as { sql: string } | undefined
+  if (!row) return
+
+  // Matches the original `reference TEXT NOT NULL UNIQUE` column definition.
+  const hasColumnUnique = /reference\s+TEXT[^,)]*\bUNIQUE\b/i.test(row.sql)
+
+  if (hasColumnUnique) {
+    // Rebuild without the column-level UNIQUE. Columns are listed explicitly so
+    // the copy stays correct whatever order the ALTER TABLE migrations left.
+    sqlite.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      BEGIN;
+
+      CREATE TABLE products_rebuilt (
+        id                       TEXT PRIMARY KEY,
+        reference                TEXT NOT NULL,
+        name                     TEXT NOT NULL,
+        brand                    TEXT,
+        category                 TEXT,
+        description              TEXT,
+        alert_threshold          INTEGER NOT NULL DEFAULT 0,
+        created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        deleted_at               TEXT,
+        image_data               TEXT,
+        pairs_per_carton         INTEGER NOT NULL DEFAULT 12,
+        selling_price_per_carton INTEGER NOT NULL DEFAULT 0
+      );
+
+      INSERT INTO products_rebuilt (
+        id, reference, name, brand, category, description, alert_threshold,
+        created_at, updated_at, deleted_at, image_data, pairs_per_carton,
+        selling_price_per_carton
+      )
+      SELECT
+        id, reference, name, brand, category, description, alert_threshold,
+        created_at, updated_at, deleted_at, image_data, pairs_per_carton,
+        selling_price_per_carton
+      FROM products;
+
+      DROP TABLE products;
+      ALTER TABLE products_rebuilt RENAME TO products;
+
+      COMMIT;
+
+      PRAGMA foreign_keys = ON;
+    `)
+
+    // DROP TABLE took the lookup index and the updated_at trigger with it.
+    sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS products_ref_idx ON products(reference);
+
+      CREATE TRIGGER IF NOT EXISTS products_updated_at
+        AFTER UPDATE ON products BEGIN
+          UPDATE products SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+        END;
+    `)
+  }
+
+  // Safe on a fresh database too: the initial CREATE TABLE still carries the
+  // old constraint, so this runs right after the rebuild above.
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS products_ref_active_unique
+      ON products(reference) WHERE deleted_at IS NULL;
+  `)
 }

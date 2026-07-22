@@ -1,4 +1,4 @@
-import { eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { getDb } from '../db/index'
 import { products, stockMovements, purchaseOrderItems, receptionItems } from '../db/schema'
@@ -13,13 +13,37 @@ export class ProductService {
     return getDb().select().from(products).where(eq(products.id, id)).get()
   }
 
+  /**
+   * A reference must stay unique among *active* products. Checked here rather
+   * than left to the DB so the user gets a French message naming the product
+   * that already holds it, instead of a raw SQLite constraint error.
+   * The partial unique index remains the last line of defence.
+   */
+  private assertReferenceAvailable(reference: string, excludeId?: string) {
+    const clash = getDb()
+      .select({ id: products.id, name: products.name })
+      .from(products)
+      .where(and(eq(products.reference, reference), isNull(products.deletedAt)))
+      .get()
+
+    if (clash && clash.id !== excludeId) {
+      throw new Error(
+        `La référence « ${reference} » est déjà utilisée par le produit « ${clash.name} ».`,
+      )
+    }
+  }
+
   create(data: ProductInsert) {
+    this.assertReferenceAvailable(data.reference)
     const id = randomUUID()
     getDb().insert(products).values({ ...data, id }).run()
     return this.getById(id)
   }
 
   update(id: string, data: Partial<ProductInsert>) {
+    if (data.reference !== undefined) {
+      this.assertReferenceAvailable(data.reference, id)
+    }
     getDb().update(products).set(data).where(eq(products.id, id)).run()
     return this.getById(id)
   }

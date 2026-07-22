@@ -24,7 +24,10 @@ export const warehouses = sqliteTable('warehouses', {
 
 export const products = sqliteTable('products', {
   id:             text('id').primaryKey(),
-  reference:      text('reference').notNull().unique(),
+  // Unique seulement parmi les produits actifs — cf. l'index partiel
+  // products_ref_active_unique dans migrations.ts. Une référence est libérée
+  // dès que le produit est supprimé (soft delete).
+  reference:      text('reference').notNull(),
   name:           text('name').notNull(),
   brand:          text('brand'),
   category:       text('category'),

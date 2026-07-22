@@ -59,3 +59,17 @@ export function serializeProductImages(images: string[]): string | null {
   const filtered = images.filter(Boolean)
   return filtered.length === 0 ? null : JSON.stringify(filtered)
 }
+
+/**
+ * Electron wraps every IPC rejection as
+ * `Error invoking remote method 'x:y': Error: <message>`.
+ * Strips that plumbing so the user only sees the message we actually wrote.
+ */
+export function cleanIpcError(err: unknown, fallback = 'Une erreur est survenue, veuillez réessayer'): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const message = raw
+    .replace(/^Error invoking remote method '[^']*':\s*/, '')
+    .replace(/^(Error|SqliteError):\s*/, '')
+    .trim()
+  return message || fallback
+}
