@@ -5,7 +5,7 @@ import { useProducts } from '@/hooks/useProducts'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
-import { parseProductImages, serializeProductImages } from '@/lib/utils'
+import { cleanIpcError, parseProductImages, serializeProductImages } from '@/lib/utils'
 
 const MAX_IMAGES = 6
 
@@ -112,8 +112,10 @@ export function ProductForm({ data, onSuccess }: ProductFormProps) {
       }
       onSuccess()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setErrors({ _form: msg || 'Une erreur est survenue, veuillez réessayer' })
+      const msg = cleanIpcError(err)
+      // A duplicate reference belongs on the field itself — a banner leaves the
+      // user hunting for which input to fix.
+      setErrors(msg.includes('référence') ? { reference: msg } : { _form: msg })
       console.error('Erreur enregistrement produit:', err)
     } finally {
       setLoading(false)
