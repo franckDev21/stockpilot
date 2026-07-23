@@ -10,6 +10,7 @@ const api = {
       invoke<{ success: boolean; message?: string }>('auth:login', email, password),
     getSession: () => invoke<{ authenticated: boolean }>('auth:getSession'),
     logout:     () => invoke<{ success: boolean }>('auth:logout'),
+    verifySuperAdmin: (password: string) => invoke<{ ok: boolean }>('auth:verifySuperAdmin', password),
   },
 
   warehouses: {
@@ -64,6 +65,7 @@ const api = {
     getEnrichedList: ()              => invoke('receptions:getEnrichedList'),
     getById:         (id: string)    => invoke('receptions:getById', id),
     create:          (data: unknown) => invoke('receptions:create', data),
+    update:          (id: string, data: unknown) => invoke('receptions:update', id, data),
   },
 
   transfers: {

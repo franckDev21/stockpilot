@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Truck, ArrowRight, Calendar, Eye, TrendingUp } from 'lucide-react'
+import { Truck, ArrowRight, Calendar, Eye, Pencil, TrendingUp } from 'lucide-react'
 import { TableCard }        from '@/components/ui/TableCard'
 import { Button }           from '@/components/ui/Button'
 import { Badge }            from '@/components/ui/Badge'
+import { SuperAdminGate }   from '@/components/ui/SuperAdminGate'
 import { useAppStore }      from '@/store/app.store'
 import { useTransfers }     from '@/hooks/useTransfers'
 import { usePurchaseOrders } from '@/hooks/usePurchaseOrders'
@@ -31,6 +32,8 @@ function ReceptionsPanel() {
 
   const [receptions, setReceptions] = useState<EnrichedReception[]>([])
   const [loading, setLoading]       = useState(true)
+  // Réception dont la modification est en attente de déverrouillage super-admin.
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -53,6 +56,7 @@ function ReceptionsPanel() {
   const totalCaAll = receptions.reduce((s, r) => s + r.caEstimeFcfa, 0)
 
   return (
+    <>
     <TableCard
       title="Réceptions fournisseur"
       subtitle="Arrivage #1 — Marchandise reçue du fournisseur"
@@ -129,7 +133,10 @@ function ReceptionsPanel() {
                       {formatDate(r.receptionDate)}
                     </td>
                     <td className="px-5 py-3.5 no-print">
-                      <div className="flex items-center justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => setPendingEditId(r.id)} className="icon-btn" title="Modifier (super-admin)">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
                         <button onClick={() => openDetail('reception', r.id)} className="icon-btn" title="Voir détail">
                           <Eye className="w-3.5 h-3.5" />
                         </button>
@@ -143,6 +150,19 @@ function ReceptionsPanel() {
         </div>
       )}
     </TableCard>
+
+    <SuperAdminGate
+      isOpen={pendingEditId !== null}
+      onClose={() => setPendingEditId(null)}
+      onVerified={() => {
+        const id = pendingEditId
+        setPendingEditId(null)
+        if (id) openDrawer('edit-reception', { id })
+      }}
+      title="Modifier un arrivage"
+      message="La modification d'une réception recalcule le stock. Confirmez avec le mot de passe super-admin."
+    />
+    </>
   )
 }
 

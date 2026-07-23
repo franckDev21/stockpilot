@@ -29,6 +29,7 @@ const CONFIGS: Record<string, DrawerConfig> = {
   'edit-order':       { title: 'Modifier la commande',      subtitle: 'Articles, coûts et simulation de profit', width: 'xl' },
   'pay-order':          { title: 'Enregistrer un paiement',   subtitle: 'Acompte, solde ou paiement intégral',     width: 'md' },
   'create-reception':   { title: 'Nouvelle réception',        subtitle: 'Marchandise reçue du fournisseur',          width: 'lg' },
+  'edit-reception':     { title: 'Modifier la réception',      subtitle: 'Ajuster les quantités reçues (super-admin)', width: 'lg' },
   'create-transfer':    { title: 'Nouveau transfert',          subtitle: 'Réapprovisionner une boutique',             width: 'lg' },
 }
 
@@ -54,6 +55,7 @@ export function DrawerRouter() {
       case 'edit-order':      return <PurchaseOrderForm orderId={(data as PurchaseOrder).id} onSuccess={onSuccess} />
       case 'pay-order':         return <OrderPaymentForm orderId={(data as PurchaseOrder).id} onSuccess={onSuccess} />
       case 'create-reception':  return <ReceptionForm onSuccess={onSuccess} />
+      case 'edit-reception':    return <ReceptionForm receptionId={(data as { id: string }).id} onSuccess={onSuccess} />
       case 'create-transfer':   return <TransferForm  onSuccess={onSuccess} />
       default: return null
     }

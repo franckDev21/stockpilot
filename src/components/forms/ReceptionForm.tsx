@@ -26,7 +26,8 @@ interface FormState {
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
+export function ReceptionForm({ receptionId, onSuccess }: { receptionId?: string; onSuccess: () => void }) {
+  const isEdit = Boolean(receptionId)
   const { create }    = useReceptions()
   const { orders }    = usePurchaseOrders()
   const { warehouses } = useWarehouses()
@@ -38,6 +39,10 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
   const [orderItems, setOrderItems] = useState<OrderItem[]>([])
   const [loading, setLoading]       = useState(false)
   const [errors, setErrors]         = useState<Record<string, string>>({})
+
+  // En édition : quantités déjà reçues, par orderItemId. `null` tant que la
+  // réception n'est pas chargée (empêche de préremplir avec les quantités commandées).
+  const [initialReceived, setInitialReceived] = useState<Record<string, string> | null>(isEdit ? null : {})
 
   // Filter orders eligible for reception
   const eligibleOrders = orders.filter(
@@ -53,9 +58,28 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
     label: `${w.name} (${w.type === 'warehouse' ? 'Entrepôt' : 'Boutique'})`,
   }))
 
+  const currentOrderRef = orders.find((o) => o.id === form.orderId)?.reference ?? '—'
+
+  // En édition : charger la réception existante pour préremplir le formulaire.
+  useEffect(() => {
+    if (!receptionId) return
+    window.api.receptions.getById(receptionId).then((raw) => {
+      const r = raw as {
+        orderId: string; warehouseId: string; receptionDate: string; notes: string | null
+        items: Array<{ orderItemId: string; cartonsReceived: number }>
+      }
+      if (!r) return
+      setForm({ orderId: r.orderId, warehouseId: r.warehouseId, receptionDate: r.receptionDate, notes: r.notes ?? '' })
+      const map: Record<string, string> = {}
+      for (const it of r.items) map[it.orderItemId] = String(it.cartonsReceived)
+      setInitialReceived(map)
+    }).catch(() => setInitialReceived({}))
+  }, [receptionId])
+
   // Load order items when orderId changes
   useEffect(() => {
     if (!form.orderId) { setOrderItems([]); return }
+    if (initialReceived === null) return // édition : on attend la réception
     window.api.purchaseOrders.getById(form.orderId).then((raw) => {
       const detail = raw as { items: Array<{ id: string; productId: string; cartonsOrdered: number; pairsPerCarton: number }> }
       setOrderItems(
@@ -64,11 +88,12 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
           productId:       it.productId,
           cartonsOrdered:  it.cartonsOrdered,
           pairsPerCarton:  it.pairsPerCarton,
-          cartonsReceived: String(it.cartonsOrdered), // pre-fill with ordered qty
+          // édition → quantité déjà reçue ; création → prérempli avec la qté commandée
+          cartonsReceived: initialReceived[it.id] ?? String(it.cartonsOrdered),
         })),
       )
     }).catch(() => setOrderItems([]))
-  }, [form.orderId])
+  }, [form.orderId, initialReceived])
 
   const setField = (key: keyof FormState) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
@@ -92,6 +117,8 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
       if (isNaN(n) || n < 0 || n > it.cartonsOrdered)
         e[`item_${i}`] = `Max ${it.cartonsOrdered} cartons`
     })
+    if (orderItems.length > 0 && !orderItems.some((it) => Number(it.cartonsReceived) > 0))
+      e._form = 'Renseignez au moins un article reçu (quantité supérieure à 0).'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -101,15 +128,26 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
     if (!validate()) return
     setLoading(true)
     try {
-      await create({
-        orderId:       form.orderId,
-        warehouseId:   form.warehouseId,
-        receptionDate: form.receptionDate,
-        notes:         form.notes.trim() || null,
-        items: orderItems
-          .filter((it) => Number(it.cartonsReceived) > 0)
-          .map((it) => ({ orderItemId: it.id, cartonsReceived: Number(it.cartonsReceived) })),
-      })
+      const items = orderItems
+        .filter((it) => Number(it.cartonsReceived) > 0)
+        .map((it) => ({ orderItemId: it.id, cartonsReceived: Number(it.cartonsReceived) }))
+
+      if (isEdit && receptionId) {
+        await window.api.receptions.update(receptionId, {
+          warehouseId:   form.warehouseId,
+          receptionDate: form.receptionDate,
+          notes:         form.notes.trim() || null,
+          items,
+        })
+      } else {
+        await create({
+          orderId:       form.orderId,
+          warehouseId:   form.warehouseId,
+          receptionDate: form.receptionDate,
+          notes:         form.notes.trim() || null,
+          items,
+        })
+      }
       onSuccess()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -122,14 +160,24 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Select
-        label="Commande fournisseur"
-        options={orderOptions}
-        value={form.orderId}
-        onChange={setField('orderId')}
-        error={errors.orderId}
-        placeholder="Sélectionner une commande…"
-      />
+      {isEdit ? (
+        <div>
+          <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">Commande fournisseur</label>
+          <div className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200">
+            <span className="ref-badge">{currentOrderRef}</span>
+            <span className="text-xs text-slate-400 ml-2">Commande non modifiable</span>
+          </div>
+        </div>
+      ) : (
+        <Select
+          label="Commande fournisseur"
+          options={orderOptions}
+          value={form.orderId}
+          onChange={setField('orderId')}
+          error={errors.orderId}
+          placeholder="Sélectionner une commande…"
+        />
+      )}
 
       <Select
         label="Entrepôt de destination"
@@ -203,7 +251,7 @@ export function ReceptionForm({ onSuccess }: { onSuccess: () => void }) {
 
       <div className="flex gap-2 justify-end pt-2 border-t border-slate-100">
         <Button type="button" variant="secondary" onClick={onSuccess}>Annuler</Button>
-        <Button type="submit" loading={loading}>Enregistrer la réception</Button>
+        <Button type="submit" loading={loading}>{isEdit ? 'Enregistrer les modifications' : 'Enregistrer la réception'}</Button>
       </div>
     </form>
   )

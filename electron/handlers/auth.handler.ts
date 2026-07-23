@@ -8,6 +8,11 @@ import path from 'node:path'
 const ADMIN_EMAIL    = 'feujiodoungue@gmail.com'
 const ADMIN_PASSWORD = 'password'
 
+// Mot de passe « super-admin » exigé pour les actions sensibles réservées à
+// l'administrateur (ex. modifier un arrivage déjà réceptionné). Distinct du mot
+// de passe de connexion : à changer ici pour le personnaliser.
+const SUPER_ADMIN_PASSWORD = 'superadmin'
+
 // Session persistée dans un fichier (userData) → survit à la fermeture de l'app,
 // plus fiable que le localStorage du renderer en mode packagé (origine file://).
 function sessionFile(): string {
@@ -46,4 +51,10 @@ export function registerAuthHandlers(ipc: IpcMain): void {
     writeSession(false)
     return { success: true }
   })
+
+  // Vérifie le mot de passe super-admin pour débloquer une action sensible.
+  // Ne modifie pas la session : c'est une confirmation ponctuelle.
+  ipc.handle('auth:verifySuperAdmin', (_e, password: string) => ({
+    ok: password === SUPER_ADMIN_PASSWORD,
+  }))
 }

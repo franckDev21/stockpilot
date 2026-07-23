@@ -622,7 +622,9 @@ async function syncReceptions(cfg: SyncConfig, errors: string[]) {
   }
 
   return syncSimpleEntity({
-    cfg, name: 'receptions', endpoint: '/receptions', canUpdate: false,
+    // canUpdate: true → les modifications d'arrivage (super-admin) sont poussées
+    // en PUT /receptions/{id}. Requiert le endpoint update côté API.
+    cfg, name: 'receptions', endpoint: '/receptions', canUpdate: true,
     localRows: localReceptions, remoteRows, toApiBody, applyRemoteToLocal, errors,
   })
 }

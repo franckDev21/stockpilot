@@ -26,6 +26,7 @@ declare interface Window {
       login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>
       getSession: () => Promise<{ authenticated: boolean }>
       logout:     () => Promise<{ success: boolean }>
+      verifySuperAdmin: (password: string) => Promise<{ ok: boolean }>
     }
 
     warehouses: {
@@ -75,6 +76,7 @@ declare interface Window {
       getEnrichedList: () => Promise<unknown[]>
       getById:         (id: string) => Promise<unknown>
       create:          (data: unknown) => Promise<unknown>
+      update:          (id: string, data: unknown) => Promise<unknown>
     }
     transfers: {
       getAll:  () => Promise<unknown[]>
