@@ -99,6 +99,12 @@ export interface OrderPayment {
   paymentDate: string
   type: 'deposit' | 'balance' | 'full'
   notes: string | null
+  /**
+   * Versement unique réparti sur plusieurs commandes du même fournisseur :
+   * toutes les lignes créées ensemble partagent cet identifiant. Null pour un
+   * paiement mono-commande.
+   */
+  paymentGroupId?: string | null
   createdAt: string
 }
 

@@ -58,6 +58,12 @@ const api = {
     simulateProfit:   (data: unknown)              => invoke('purchaseOrders:simulateProfit', data),
     getAllEnriched:    ()                           => invoke('purchaseOrders:getAllEnriched'),
     deletePayment:    (paymentId: string)          => invoke('purchaseOrders:deletePayment', paymentId),
+    previewPayment:   (orderId: string, amountFcfa: number) =>
+      invoke('purchaseOrders:previewPayment', orderId, amountFcfa),
+    addSupplierPayment: (orderId: string, data: unknown) =>
+      invoke('purchaseOrders:addSupplierPayment', orderId, data),
+    getSupplierPaymentHistory: (supplierId: string) =>
+      invoke('purchaseOrders:getSupplierPaymentHistory', supplierId),
   },
 
   receptions: {

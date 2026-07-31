@@ -131,6 +131,10 @@ export const orderPayments = sqliteTable('order_payments', {
   paymentDate: text('payment_date').notNull(),
   type:        text('type', { enum: ['deposit', 'balance', 'full'] }).notNull(),
   notes:       text('notes'),
+  // Versement unique réparti sur plusieurs commandes d'un même fournisseur :
+  // toutes les lignes générées ensemble partagent ce group id (null pour les
+  // paiements mono-commande enregistrés avant cette fonctionnalité).
+  paymentGroupId: text('payment_group_id'),
   ...timestamps,
 })
 

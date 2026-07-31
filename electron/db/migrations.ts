@@ -285,6 +285,11 @@ export function runMigrations(sqlite: Database.Database): void {
     `ALTER TABLE products ADD COLUMN image_data TEXT`,
     `ALTER TABLE products ADD COLUMN pairs_per_carton INTEGER NOT NULL DEFAULT 12`,
     `ALTER TABLE products ADD COLUMN selling_price_per_carton INTEGER NOT NULL DEFAULT 0`,
+    // Un versement unique peut désormais être réparti sur plusieurs commandes du
+    // même fournisseur (débordement FIFO). Les lignes issues d'un même versement
+    // partagent ce group id, ce qui permet d'en réimprimer le reçu.
+    // Nullable : les paiements enregistrés avant cette version restent valides.
+    `ALTER TABLE order_payments ADD COLUMN payment_group_id TEXT`,
   ]
   for (const sql of alterMigrations) {
     try { sqlite.exec(sql) } catch { /* column already exists — ignore */ }

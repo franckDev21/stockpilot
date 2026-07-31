@@ -4,6 +4,47 @@ interface StockForecastItem    { productId: string; totalPairs: number; dailySal
 interface ReceivableItem       { customerId: string; customerName: string; customerPhone: string | null; totalDue: number; salesCount: number }
 interface LowStockItem         { productId: string; productName: string; reference: string; totalPairs: number; threshold: number }
 interface SupplierPayableItem  { orderId: string; reference: string; supplierId: string; supplierName: string | null; totalCostFcfa: number; paidAmountFcfa: number; orderDate: string; status: string }
+
+/** Part d'un versement imputée à une commande précise. */
+interface PaymentAllocation {
+  orderId:             string
+  reference:           string
+  orderDate:           string
+  totalCostFcfa:       number
+  paidBeforeFcfa:      number
+  remainingBeforeFcfa: number
+  allocatedFcfa:       number
+  type:                'deposit' | 'balance' | 'full'
+  isTargetOrder:       boolean
+  settled:             boolean
+}
+/** Répartition d'un versement fournisseur, avant écriture. */
+interface PaymentPlan {
+  supplierId:       string
+  supplierName:     string | null
+  amountFcfa:       number
+  supplierDebtFcfa: number
+  allocations:      PaymentAllocation[]
+  overflow:         boolean
+  excessFcfa:       number
+}
+/** Un versement du fournisseur, avec le détail des commandes servies. */
+interface SupplierPaymentGroup {
+  groupId:      string
+  supplierId:   string
+  supplierName: string | null
+  paymentDate:  string
+  createdAt:    string
+  totalFcfa:    number
+  notes:        string | null
+  lines: Array<{
+    paymentId:      string
+    orderId:        string
+    orderReference: string
+    amountFcfa:     number
+    type:           'deposit' | 'balance' | 'full'
+  }>
+}
 interface SyncSummary {
   success:    boolean
   online:     boolean
@@ -70,6 +111,11 @@ declare interface Window {
       simulateProfit: (data: unknown) => Promise<unknown>
       getAllEnriched:  () => Promise<unknown[]>
       deletePayment:  (paymentId: string) => Promise<void>
+      previewPayment: (orderId: string, amountFcfa: number) => Promise<PaymentPlan>
+      addSupplierPayment: (orderId: string, data: {
+        amountFcfa: number; paymentDate: string; notes?: string | null
+      }) => Promise<PaymentPlan & { paymentGroupId: string }>
+      getSupplierPaymentHistory: (supplierId: string) => Promise<SupplierPaymentGroup[]>
     }
     receptions: {
       getAll:          () => Promise<unknown[]>

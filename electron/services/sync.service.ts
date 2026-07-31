@@ -53,6 +53,8 @@ interface ApiOrderItem {
 interface ApiOrderPayment {
   id: string; orderId: string; amountFcfa: number; paymentDate: string
   type: 'deposit' | 'balance' | 'full'; notes: string | null; createdAt: string; updatedAt: string
+  // Absent des réponses d'une API pas encore à jour → traité comme null.
+  paymentGroupId?: string | null
 }
 interface ApiPurchaseOrder {
   id: string; reference: string; supplierId: string; orderDate: string
@@ -551,7 +553,7 @@ async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder
       try {
         await apiPost(cfg, `/purchase-orders/${local.orderId}/payments`, toSnakeCase({
           id: local.id, amountFcfa: local.amountFcfa, paymentDate: local.paymentDate,
-          type: local.type, notes: local.notes,
+          type: local.type, notes: local.notes, paymentGroupId: local.paymentGroupId,
         }))
         pushed++
       } catch (e) {
@@ -567,6 +569,7 @@ async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder
         .values({
           id: remote.id, orderId: remote.orderId, amountFcfa: remote.amountFcfa,
           paymentDate: remote.paymentDate, type: remote.type, notes: remote.notes,
+          paymentGroupId: remote.paymentGroupId ?? null,
           createdAt: remote.createdAt, updatedAt: remote.updatedAt,
         })
         .onConflictDoNothing()

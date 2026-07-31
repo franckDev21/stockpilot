@@ -14,4 +14,11 @@ export function registerPurchaseOrderHandlers(ipc: IpcMain): void {
   ipc.handle('purchaseOrders:addPayment',     (_e, orderId, data)     => service.addPayment(orderId, data))
   ipc.handle('purchaseOrders:deletePayment',  (_e, paymentId: string) => service.deletePayment(paymentId))
   ipc.handle('purchaseOrders:simulateProfit',(_e, data)              => service.simulateProfit(data))
+  // Versement fournisseur réparti sur plusieurs commandes (débordement FIFO).
+  ipc.handle('purchaseOrders:previewPayment', (_e, orderId: string, amountFcfa: number) =>
+    service.computePaymentPlan(orderId, amountFcfa))
+  ipc.handle('purchaseOrders:addSupplierPayment', (_e, orderId: string, data) =>
+    service.addSupplierPayment(orderId, data))
+  ipc.handle('purchaseOrders:getSupplierPaymentHistory', (_e, supplierId: string) =>
+    service.getSupplierPaymentHistory(supplierId))
 }

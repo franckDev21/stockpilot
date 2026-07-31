@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ShoppingCart, Plus, Pencil, Trash2, Eye, Printer, Loader2,
-  Check, X, Phone, Globe, Mail, TriangleAlert, Calendar as CalendarIcon,
+  Check, X, Phone, Globe, Mail, TriangleAlert, Calendar as CalendarIcon, History,
 } from 'lucide-react'
 import { Button }      from '@/components/ui/Button'
 import { Badge }       from '@/components/ui/Badge'
+import { PaymentPlanModal } from '@/components/orders/PaymentPlanModal'
+import { SupplierPaymentHistory } from '@/components/orders/SupplierPaymentHistory'
 import { useAppStore } from '@/store/app.store'
 import { formatFcfa, formatDate, parseProductImages } from '@/lib/utils'
 import type { EnrichedPurchaseOrder, OrderPayment, PurchaseOrder } from '@/types/domain'
@@ -125,17 +127,30 @@ interface PaymentCardProps {
   order: EnrichedPurchaseOrder
   rowSpan: number
   onAddPayment: (orderId: string, data: unknown) => Promise<void>
+  onSupplierPayment: (orderId: string, data: { amountFcfa: number; paymentDate: string; notes: string }) => Promise<void>
   onDeletePayment: (paymentId: string) => Promise<void>
 }
 
-function PaymentCard({ order, rowSpan, onAddPayment, onDeletePayment }: PaymentCardProps) {
+function PaymentCard({ order, rowSpan, onAddPayment, onSupplierPayment, onDeletePayment }: PaymentCardProps) {
   const [addingPayment, setAddingPayment] = useState(false)
+  // Versement en attente de confirmation parce qu'il déborde sur d'autres commandes
+  const [plan, setPlan]             = useState<PaymentPlan | null>(null)
+  const [pending, setPending]       = useState<{ amountFcfa: number; paymentDate: string; notes: string } | null>(null)
+  const [planSaving, setPlanSaving] = useState(false)
+  const [planError, setPlanError]   = useState('')
+  const [showHistory, setShowHistory] = useState(false)
   const { openModal } = useAppStore()
 
   const handleDeletePayment = (payment: OrderPayment) => {
     openModal(
       'Supprimer ce paiement ?',
-      `Le paiement de ${formatFcfa(payment.amountFcfa)} (${PAYMENT_TYPE[payment.type].label}) sera supprimé définitivement.`,
+      `Le paiement de ${formatFcfa(payment.amountFcfa)} (${PAYMENT_TYPE[payment.type].label}) sera supprimé définitivement.` +
+      (payment.paymentGroupId
+        // Une ligne issue d'un versement réparti : les parts imputées aux autres
+        // commandes ne sont pas touchées, ce qui n'est pas évident depuis ici.
+        ? ` Attention : cette ligne fait partie d'un versement réparti sur plusieurs commandes. ` +
+          `Seule cette part est supprimée, les autres commandes gardent la leur.`
+        : ''),
       () => onDeletePayment(payment.id),
     )
   }
@@ -146,8 +161,43 @@ function PaymentCard({ order, rowSpan, onAddPayment, onDeletePayment }: PaymentC
   const pct       = order.totalCostFcfa > 0 ? Math.min(100, Math.round((totalPaid / order.totalCostFcfa) * 100)) : 0
 
   const handleSave = async (data: { amountFcfa: number; type: OrderPayment['type']; paymentDate: string; notes: string }) => {
-    await onAddPayment(order.id, data)
-    setAddingPayment(false)
+    // Le montant tient dans cette commande : chemin habituel, rien ne change.
+    if (data.amountFcfa <= remaining) {
+      await onAddPayment(order.id, data)
+      setAddingPayment(false)
+      return
+    }
+    // Il déborde : on montre la répartition et on attend une validation explicite.
+    try {
+      const preview = await window.api.purchaseOrders.previewPayment(order.id, data.amountFcfa)
+      setPending({ amountFcfa: data.amountFcfa, paymentDate: data.paymentDate, notes: data.notes })
+      setPlanError('')
+      setPlan(preview)
+    } catch (err) {
+      openModal('Répartition impossible', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const confirmPlan = async () => {
+    if (!pending) return
+    setPlanSaving(true)
+    setPlanError('')
+    try {
+      await onSupplierPayment(order.id, pending)
+      setPlan(null)
+      setPending(null)
+      setAddingPayment(false)
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPlanSaving(false)
+    }
+  }
+
+  const cancelPlan = () => {
+    setPlan(null)
+    setPending(null)
+    setPlanError('')
   }
 
   return (
@@ -160,6 +210,13 @@ function PaymentCard({ order, rowSpan, onAddPayment, onDeletePayment }: PaymentC
           <span className={`text-[9px] font-extrabold uppercase tracking-widest ${isSolde ? 'text-emerald-700' : 'text-amber-700'}`}>
             Paiements · {order.payments.length} transaction{order.payments.length !== 1 ? 's' : ''}
           </span>
+          <button
+            onClick={() => setShowHistory(true)}
+            title={`Historique des avances de ${order.supplierName ?? 'ce fournisseur'}`}
+            className="ml-auto shrink-0 p-1 rounded text-slate-400 hover:text-primary-600 hover:bg-white/60 transition-colors"
+          >
+            <History className="w-3 h-3" />
+          </button>
         </div>
 
         {/* Payment list */}
@@ -243,6 +300,24 @@ function PaymentCard({ order, rowSpan, onAddPayment, onDeletePayment }: PaymentC
         </div>
 
       </div>
+
+      {showHistory && (
+        <SupplierPaymentHistory
+          supplierId={order.supplierId}
+          supplierName={order.supplierName}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
+
+      {plan && (
+        <PaymentPlanModal
+          plan={plan}
+          saving={planSaving}
+          error={planError}
+          onConfirm={confirmPlan}
+          onCancel={cancelPlan}
+        />
+      )}
     </td>
   )
 }
@@ -255,10 +330,11 @@ interface OrderGroupProps {
   onEdit: (o: EnrichedPurchaseOrder) => void
   onView: (id: string) => void
   onAddPayment: (orderId: string, data: unknown) => Promise<void>
+  onSupplierPayment: (orderId: string, data: { amountFcfa: number; paymentDate: string; notes: string }) => Promise<void>
   onDeletePayment: (paymentId: string) => Promise<void>
 }
 
-function OrderGroup({ order, onDelete, onEdit, onView, onAddPayment, onDeletePayment }: OrderGroupProps) {
+function OrderGroup({ order, onDelete, onEdit, onView, onAddPayment, onSupplierPayment, onDeletePayment }: OrderGroupProps) {
   const badge      = STATUS_BADGE[order.status]
   const items      = order.items.length > 0 ? order.items : [null]
   const totalRows  = items.length + 1 // +1 for the total row
@@ -399,6 +475,7 @@ function OrderGroup({ order, onDelete, onEdit, onView, onAddPayment, onDeletePay
               order={order}
               rowSpan={totalRows}
               onAddPayment={onAddPayment}
+              onSupplierPayment={onSupplierPayment}
               onDeletePayment={onDeletePayment}
             />
           ) : null}
@@ -606,6 +683,16 @@ function OrdersExcelTable({ orders, loading, supplierFilter, dateFrom, dateTo }:
     triggerRefresh()
   }
 
+  // Versement qui déborde sur d'autres commandes du même fournisseur : la
+  // répartition est recalculée côté service, celle de l'aperçu n'est pas rejouée.
+  const handleSupplierPayment = async (
+    orderId: string,
+    data: { amountFcfa: number; paymentDate: string; notes: string },
+  ) => {
+    await window.api.purchaseOrders.addSupplierPayment(orderId, data)
+    triggerRefresh()
+  }
+
   const handleDeletePayment = async (paymentId: string) => {
     await window.api.purchaseOrders.deletePayment(paymentId)
     triggerRefresh()
@@ -719,6 +806,7 @@ function OrdersExcelTable({ orders, loading, supplierFilter, dateFrom, dateTo }:
                   onEdit={(o) => openDrawer('edit-order', o)}
                   onView={(id) => openDetail('order', id)}
                   onAddPayment={handleAddPayment}
+                  onSupplierPayment={handleSupplierPayment}
                   onDeletePayment={handleDeletePayment}
                 />
               ))}
