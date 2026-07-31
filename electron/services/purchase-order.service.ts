@@ -120,7 +120,10 @@ export class PurchaseOrderService {
     const payments = db
       .select()
       .from(orderPayments)
-      .where(inArray(orderPayments.orderId, orderIds))
+      .where(and(
+        inArray(orderPayments.orderId, orderIds),
+        isNull(orderPayments.deletedAt),
+      ))
       .all()
 
     return orders.map((order) => ({
@@ -135,7 +138,9 @@ export class PurchaseOrderService {
     if (!order) return null
 
     const items    = getDb().select().from(purchaseOrderItems).where(eq(purchaseOrderItems.orderId, id)).all()
-    const payments = getDb().select().from(orderPayments).where(eq(orderPayments.orderId, id)).all()
+    const payments = getDb().select().from(orderPayments)
+      .where(and(eq(orderPayments.orderId, id), isNull(orderPayments.deletedAt)))
+      .all()
 
     return { ...order, items, payments }
   }
@@ -340,8 +345,21 @@ export class PurchaseOrderService {
     return this.getById(orderId)
   }
 
+  /**
+   * Suppression **logique** d'un paiement.
+   *
+   * Un `DELETE` sec faisait réapparaître le paiement à la synchro suivante :
+   * l'API le renvoie toujours et le pull réinsère toute ligne absente en local
+   * (voir `syncOrderPayments`). On marque donc `deletedAt`, ce qui sort la ligne
+   * de toutes les lectures, empêche le pull de la ressusciter, et laisse la
+   * synchro propager la suppression à l'API.
+   */
   deletePayment(paymentId: string) {
-    getDb().delete(orderPayments).where(eq(orderPayments.id, paymentId)).run()
+    const now = new Date().toISOString()
+    getDb().update(orderPayments)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(eq(orderPayments.id, paymentId))
+      .run()
   }
 
   // ─── Versement fournisseur réparti sur plusieurs commandes ──────────────────
@@ -392,7 +410,10 @@ export class PurchaseOrderService {
       const rows = db
         .select({ orderId: orderPayments.orderId, amountFcfa: orderPayments.amountFcfa })
         .from(orderPayments)
-        .where(inArray(orderPayments.orderId, supplierOrders.map((o) => o.id)))
+        .where(and(
+          inArray(orderPayments.orderId, supplierOrders.map((o) => o.id)),
+          isNull(orderPayments.deletedAt),
+        ))
         .all()
       for (const r of rows) {
         paidByOrder.set(r.orderId, (paidByOrder.get(r.orderId) ?? 0) + r.amountFcfa)
@@ -557,7 +578,10 @@ export class PurchaseOrderService {
     const rows = db
       .select()
       .from(orderPayments)
-      .where(inArray(orderPayments.orderId, supplierOrders.map((o) => o.id)))
+      .where(and(
+        inArray(orderPayments.orderId, supplierOrders.map((o) => o.id)),
+        isNull(orderPayments.deletedAt),
+      ))
       .all()
 
     const groups = new Map<string, SupplierPaymentGroup>()

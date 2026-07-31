@@ -170,6 +170,9 @@ async function apiPost(cfg: SyncConfig, path: string, body: unknown): Promise<un
 async function apiPut(cfg: SyncConfig, path: string, body: unknown): Promise<unknown> {
   return apiRequest(cfg, 'PUT', path, body)
 }
+async function apiDelete(cfg: SyncConfig, path: string): Promise<unknown> {
+  return apiRequest(cfg, 'DELETE', path)
+}
 
 /** Ping de connectivité — pas de navigator.onLine fiable côté process main, on fait un vrai appel réseau. */
 export async function checkConnectivity(apiUrl: string, timeoutMs = 2500): Promise<boolean> {
@@ -548,7 +551,20 @@ async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder
 
   let pushed = 0
   for (const local of localPayments) {
-    if (local.deletedAt) continue
+    // Suppression locale : contrairement aux autres entités (additive-only), on la
+    // propage. Sans ça l'API garderait le paiement, le pull ci-dessous le
+    // réinsérerait à la synchro suivante et l'avance supprimée « reviendrait ».
+    if (local.deletedAt) {
+      if (remoteById.has(local.id)) {
+        try {
+          await apiDelete(cfg, `/purchase-orders/payments/${local.id}`)
+          pushed++
+        } catch (e) {
+          errors.push(`order_payments delete ${local.id}: ${errMessage(e)}`)
+        }
+      }
+      continue
+    }
     if (!remoteById.has(local.id)) {
       try {
         await apiPost(cfg, `/purchase-orders/${local.orderId}/payments`, toSnakeCase({

@@ -194,7 +194,10 @@ export class StatsService {
       })
       .from(purchaseOrders)
       .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
-      .leftJoin(orderPayments, eq(purchaseOrders.id, orderPayments.orderId))
+      .leftJoin(orderPayments, and(
+        eq(purchaseOrders.id, orderPayments.orderId),
+        isNull(orderPayments.deletedAt),
+      ))
       .where(and(isNull(purchaseOrders.deletedAt), sql`${purchaseOrders.status} != 'cancelled'`))
       .groupBy(purchaseOrders.id)
       .having(sql`${purchaseOrders.totalCostFcfa} > COALESCE(SUM(${orderPayments.amountFcfa}), 0)`)
