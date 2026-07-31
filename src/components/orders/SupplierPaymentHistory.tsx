@@ -1,17 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Printer, Loader2, History, X } from 'lucide-react'
 import { formatFcfa, formatDate } from '@/lib/utils'
+import { PaymentReceipt, useReceiptPrint, PAYMENT_TYPE_LABEL as TYPE_LABEL } from './PaymentReceipt'
 
 interface SupplierPaymentHistoryProps {
   supplierId:   string
   supplierName: string | null
   onClose:      () => void
-}
-
-const TYPE_LABEL: Record<'deposit' | 'balance' | 'full', string> = {
-  deposit: 'Avance',
-  balance: 'Solde',
-  full:    'Complet',
 }
 
 /**
@@ -26,8 +21,7 @@ export function SupplierPaymentHistory({ supplierId, supplierName, onClose }: Su
   const [error, setError]     = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
   // Versement dont le reçu est en cours d'impression (rendu hors écran).
-  const [receipt, setReceipt] = useState<SupplierPaymentGroup | null>(null)
-  const receiptRef = useRef<HTMLDivElement>(null)
+  const { receipt, printReceipt, receiptRef } = useReceiptPrint()
 
   useEffect(() => {
     let cancelled = false
@@ -37,28 +31,6 @@ export function SupplierPaymentHistory({ supplierId, supplierName, onClose }: Su
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [supplierId])
-
-  // L'impression attend que le reçu soit réellement dans le DOM : on la
-  // déclenche depuis l'effet, pas depuis le clic.
-  useEffect(() => {
-    if (!receipt) return
-    let cancelled = false
-    const run = async () => {
-      const el = receiptRef.current
-      if (!el) return
-      el.classList.add('print-target')
-      try {
-        await window.api.print.toPDF({ filename: `recu-versement-${receipt.paymentDate}.pdf` })
-      } catch (e) {
-        console.error('Impression du reçu :', e)
-      } finally {
-        el.classList.remove('print-target')
-        if (!cancelled) setReceipt(null)
-      }
-    }
-    void run()
-    return () => { cancelled = true }
-  }, [receipt])
 
   const total = groups.reduce((s, g) => s + g.totalFcfa, 0)
 
@@ -142,7 +114,7 @@ export function SupplierPaymentHistory({ supplierId, supplierName, onClose }: Su
                       </span>
 
                       <button
-                        onClick={() => setReceipt(g)}
+                        onClick={() => printReceipt(g)}
                         disabled={receipt !== null}
                         title="Imprimer le reçu de ce versement"
                         className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors disabled:opacity-40"
@@ -183,81 +155,7 @@ export function SupplierPaymentHistory({ supplierId, supplierName, onClose }: Su
       </div>
 
       {/* ══ REÇU HORS ÉCRAN — visible uniquement dans le PDF ═══════════════════ */}
-      {receipt && (
-        <div ref={receiptRef} className="print-report bg-white text-slate-900 p-10" aria-hidden>
-          <div className="flex items-start justify-between border-b-2 border-slate-800 pb-4 mb-6">
-            <div>
-              <h1 className="text-xl font-extrabold">StockPilot — Reçu de versement</h1>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Édité le {formatDate(new Date().toISOString())}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Montant versé</p>
-              <p className="text-3xl font-extrabold text-slate-900 tabular-nums">{formatFcfa(receipt.totalFcfa)}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Fournisseur</p>
-              <p className="text-base font-bold">{receipt.supplierName ?? '—'}</p>
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Date du versement</p>
-              <p className="text-base font-bold">{formatDate(receipt.paymentDate)}</p>
-            </div>
-          </div>
-
-          <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">
-            Imputation du versement
-          </p>
-          <table className="w-full text-sm border-collapse mb-6">
-            <thead>
-              <tr className="border-b-2 border-slate-300">
-                <th className="text-left py-2 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Commande</th>
-                <th className="text-left py-2 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Nature</th>
-                <th className="text-right py-2 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Montant imputé</th>
-              </tr>
-            </thead>
-            <tbody>
-              {receipt.lines.map((l) => (
-                <tr key={l.paymentId} className="border-b border-slate-200">
-                  <td className="py-2 font-semibold">{l.orderReference}</td>
-                  <td className="py-2 text-slate-600">{TYPE_LABEL[l.type]}</td>
-                  <td className="py-2 text-right tabular-nums font-semibold">{formatFcfa(l.amountFcfa)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-slate-800">
-                <td colSpan={2} className="py-2 font-bold">Total versé</td>
-                <td className="py-2 text-right font-extrabold tabular-nums text-base">{formatFcfa(receipt.totalFcfa)}</td>
-              </tr>
-            </tfoot>
-          </table>
-
-          {receipt.notes && (
-            <div className="mb-6">
-              <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Note</p>
-              <p className="text-sm text-slate-700">{receipt.notes}</p>
-            </div>
-          )}
-
-          <div className="flex justify-between gap-12 mt-16">
-            <div className="flex-1">
-              <div className="border-t border-slate-400 pt-1">
-                <p className="text-[10px] text-slate-500">Signature du fournisseur</p>
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="border-t border-slate-400 pt-1">
-                <p className="text-[10px] text-slate-500">Signature de l'acheteur</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {receipt && <PaymentReceipt group={receipt} innerRef={receiptRef} />}
     </div>
   )
 }

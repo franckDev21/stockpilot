@@ -116,6 +116,7 @@ declare interface Window {
         amountFcfa: number; paymentDate: string; notes?: string | null
       }) => Promise<PaymentPlan & { paymentGroupId: string }>
       getSupplierPaymentHistory: (supplierId: string) => Promise<SupplierPaymentGroup[]>
+      getPaymentHistory: (supplierId?: string | null) => Promise<SupplierPaymentGroup[]>
     }
     receptions: {
       getAll:          () => Promise<unknown[]>

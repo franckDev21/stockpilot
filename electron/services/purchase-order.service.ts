@@ -520,20 +520,34 @@ export class PurchaseOrderService {
    * imprimables de la même façon.
    */
   getSupplierPaymentHistory(supplierId: string): SupplierPaymentGroup[] {
-    const db = getDb()
+    return this.getPaymentHistory({ supplierId })
+  }
 
-    const supplier = db.select().from(suppliers).where(eq(suppliers.id, supplierId)).get()
+  /**
+   * Même historique, mais tous fournisseurs confondus quand `supplierId` est
+   * absent : c'est ce que consomme le panneau latéral du tableau des commandes.
+   *
+   * Le regroupement porte sur la **totalité** des paiements, jamais sur un
+   * sous-ensemble filtré : un versement réparti garde ainsi toutes ses lignes,
+   * même celles imputées à une commande que l'écran n'affiche pas.
+   */
+  getPaymentHistory(options?: { supplierId?: string | null }): SupplierPaymentGroup[] {
+    const db = getDb()
+    const supplierId = options?.supplierId ?? null
 
     const supplierOrders = db
       .select({
         id:            purchaseOrders.id,
         reference:     purchaseOrders.reference,
         totalCostFcfa: purchaseOrders.totalCostFcfa,
+        supplierId:    purchaseOrders.supplierId,
+        supplierName:  suppliers.name,
       })
       .from(purchaseOrders)
+      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
       .where(and(
-        eq(purchaseOrders.supplierId, supplierId),
         isNull(purchaseOrders.deletedAt),
+        ...(supplierId ? [eq(purchaseOrders.supplierId, supplierId)] : []),
       ))
       .all()
 
@@ -550,12 +564,13 @@ export class PurchaseOrderService {
 
     for (const p of rows) {
       const key = p.paymentGroupId ?? p.id
+      const order = orderById.get(p.orderId)
       let group = groups.get(key)
       if (!group) {
         group = {
           groupId:      key,
-          supplierId,
-          supplierName: supplier?.name ?? null,
+          supplierId:   order?.supplierId ?? supplierId ?? '',
+          supplierName: order?.supplierName ?? null,
           paymentDate:  p.paymentDate,
           createdAt:    p.createdAt,
           totalFcfa:    0,
@@ -570,7 +585,7 @@ export class PurchaseOrderService {
       group.lines.push({
         paymentId:      p.id,
         orderId:        p.orderId,
-        orderReference: orderById.get(p.orderId)?.reference ?? '—',
+        orderReference: order?.reference ?? '—',
         amountFcfa:     p.amountFcfa,
         type:           p.type,
       })

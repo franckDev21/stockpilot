@@ -7,6 +7,7 @@ import { Button }      from '@/components/ui/Button'
 import { Badge }       from '@/components/ui/Badge'
 import { PaymentPlanModal } from '@/components/orders/PaymentPlanModal'
 import { SupplierPaymentHistory } from '@/components/orders/SupplierPaymentHistory'
+import { PaymentHistoryPanel } from '@/components/orders/PaymentHistoryPanel'
 import { useAppStore } from '@/store/app.store'
 import { formatFcfa, formatDate, parseProductImages } from '@/lib/utils'
 import type { EnrichedPurchaseOrder, OrderPayment, PurchaseOrder } from '@/types/domain'
@@ -966,6 +967,11 @@ export function OrdersSection() {
     return true
   })
 
+  // Le bandeau des dettes filtre par NOM de fournisseur ; le panneau d'historique
+  // interroge la base par id, qu'on retrouve sur n'importe quelle commande du lot.
+  const selectedSupplierId =
+    supplierFilter ? orders.find((o) => (o.supplierName ?? '') === supplierFilter)?.supplierId ?? null : null
+
   return (
     <div className="flex flex-col gap-5">
       <SupplierDebtPanel
@@ -978,13 +984,23 @@ export function OrdersSection() {
         onDateFromChange={setDateFrom}
         onDateToChange={setDateTo}
       />
-      <OrdersExcelTable
-        orders={dateFiltered}
-        loading={loading}
-        supplierFilter={supplierFilter}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-      />
+      <div className="flex items-start gap-5">
+        <div className="flex-1 min-w-0">
+          <OrdersExcelTable
+            orders={dateFiltered}
+            loading={loading}
+            supplierFilter={supplierFilter}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+          />
+        </div>
+        <PaymentHistoryPanel
+          supplierId={selectedSupplierId}
+          supplierName={supplierFilter}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
+      </div>
     </div>
   )
 }

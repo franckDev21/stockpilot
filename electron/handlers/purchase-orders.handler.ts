@@ -21,4 +21,7 @@ export function registerPurchaseOrderHandlers(ipc: IpcMain): void {
     service.addSupplierPayment(orderId, data))
   ipc.handle('purchaseOrders:getSupplierPaymentHistory', (_e, supplierId: string) =>
     service.getSupplierPaymentHistory(supplierId))
+  // Historique global (panneau latéral) : `supplierId` nul = tous fournisseurs.
+  ipc.handle('purchaseOrders:getPaymentHistory', (_e, supplierId: string | null) =>
+    service.getPaymentHistory({ supplierId }))
 }

@@ -64,6 +64,8 @@ const api = {
       invoke('purchaseOrders:addSupplierPayment', orderId, data),
     getSupplierPaymentHistory: (supplierId: string) =>
       invoke('purchaseOrders:getSupplierPaymentHistory', supplierId),
+    getPaymentHistory: (supplierId?: string | null) =>
+      invoke('purchaseOrders:getPaymentHistory', supplierId ?? null),
   },
 
   receptions: {
