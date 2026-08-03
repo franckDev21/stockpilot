@@ -240,8 +240,7 @@ function PaymentCard({ order, rowSpan, onAddPayment, onSupplierPayment, onDelete
                   </span>
                   {/* Toujours visible : caché au survol, il devenait introuvable sur une
                       commande soldée, où la carte n'a plus aucun autre bouton. */}
-                  <button
-                    onClick={() => handleDeletePayment(payment)}
+                  <button onClick={() => handleDeletePayment(payment)}
                     title="Supprimer ce paiement"
                     className="shrink-0 p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                   >
