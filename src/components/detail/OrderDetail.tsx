@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { CreditCard } from 'lucide-react'
+import { CreditCard, Trash2 } from 'lucide-react'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Button }           from '@/components/ui/Button'
 import { Badge }            from '@/components/ui/Badge'
@@ -27,17 +27,33 @@ interface OrderWithDetail {
 export function OrderDetail({ id }: { id: string }) {
   const [order, setOrder]   = useState<OrderWithDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const { openDrawer }      = useAppStore()
+  const { openDrawer, openModal, triggerRefresh } = useAppStore()
   const { suppliers }       = useSuppliers()
   const { products }        = useProducts()
 
-  useEffect(() => {
+  const loadData = () => {
     setLoading(true)
     window.api.purchaseOrders.getById(id)
       .then((d) => setOrder(d as OrderWithDetail))
       .catch(() => {})
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadData()
   }, [id])
+
+  const handleDeletePayment = (paymentId: string, amountFcfa: number) => {
+    openModal(
+      'Supprimer ce paiement ?',
+      `Le paiement de ${formatFcfa(amountFcfa)} sera supprimé définitivement.`,
+      async () => {
+        await window.api.purchaseOrders.deletePayment(paymentId)
+        triggerRefresh()
+        loadData()
+      },
+    )
+  }
 
   if (loading) return <div className="flex items-center justify-center py-32"><div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" /></div>
   if (!order)  return <div className="empty-state"><p className="text-slate-500">Commande introuvable</p></div>
@@ -135,6 +151,7 @@ export function OrderDetail({ id }: { id: string }) {
                   <th className="text-left px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Date</th>
                   <th className="text-left px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Type</th>
                   <th className="text-right px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Montant</th>
+                  <th className="w-10 px-3 py-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -143,6 +160,15 @@ export function OrderDetail({ id }: { id: string }) {
                     <td className="px-5 py-3 text-slate-600">{formatDate(p.paymentDate)}</td>
                     <td className="px-5 py-3 text-slate-600 capitalize">{p.type}</td>
                     <td className="px-5 py-3 text-right font-bold text-emerald-700 tabular-nums">{formatFcfa(p.amountFcfa)}</td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        onClick={() => handleDeletePayment(p.id, p.amountFcfa)}
+                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Supprimer ce paiement"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

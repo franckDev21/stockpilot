@@ -243,10 +243,9 @@ function PaymentCard({ order, rowSpan, onAddPayment, onSupplierPayment, onDelete
                   <button
                     onClick={() => handleDeletePayment(payment)}
                     title="Supprimer ce paiement"
-                    aria-label={`Supprimer le paiement de ${formatFcfa(payment.amountFcfa)}`}
-                    className="shrink-0 w-5 h-5 rounded-md flex items-center justify-center border border-red-200 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
+                    className="shrink-0 p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                   >
-                    <Trash2 className="w-3 h-3" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )
