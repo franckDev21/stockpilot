@@ -228,7 +228,7 @@ function PaymentCard({ order, rowSpan, onAddPayment, onSupplierPayment, onDelete
             {order.payments.map((payment) => {
               const pt = PAYMENT_TYPE[payment.type]
               return (
-                <div key={payment.id} className="px-3 py-2 flex items-center gap-2 group hover:bg-slate-50/60 transition-colors">
+                <div key={payment.id} className="px-3 py-2 flex items-center gap-1.5 hover:bg-slate-50/60 transition-colors">
                   <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${pt.cls}`}>
                     {pt.label}
                   </span>
@@ -238,11 +238,15 @@ function PaymentCard({ order, rowSpan, onAddPayment, onSupplierPayment, onDelete
                   <span className="ml-auto text-xs font-extrabold text-primary-600 tabular-nums shrink-0">
                     {formatFcfa(payment.amountFcfa)}
                   </span>
+                  {/* Toujours visible : caché au survol, il devenait introuvable sur une
+                      commande soldée, où la carte n'a plus aucun autre bouton. */}
                   <button
                     onClick={() => handleDeletePayment(payment)}
-                    className="opacity-0 group-hover:opacity-100 shrink-0 w-4 h-4 rounded flex items-center justify-center hover:bg-red-100 text-red-300 hover:text-red-500 transition-opacity"
+                    title="Supprimer ce paiement"
+                    aria-label={`Supprimer le paiement de ${formatFcfa(payment.amountFcfa)}`}
+                    className="shrink-0 w-5 h-5 rounded-md flex items-center justify-center border border-red-200 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
                   >
-                    <Trash2 className="w-2.5 h-2.5" />
+                    <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
               )
