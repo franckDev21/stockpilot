@@ -40,8 +40,9 @@ synchronisable doit avoir l'un ou l'autre.**
 | | |
 |---|---|
 | API — commit | `2c1e1dc` sur `main`, **CI verte, DÉPLOYÉE en prod** |
-| Desktop — synchro | `c1a4084` sur `main`, poussé, **PAS ENCORE TAGGUÉ** |
+| Desktop — synchro | `c1a4084` sur `main` |
 | Desktop — sauvegarde WAL | `b8039a8` sur `main` |
+| **Release v1.4.0** | `213e49f`, tag `v1.4.0`, **PUBLIÉE le 17/08** — workflow vert |
 | Outil de fusion | `/home/admin/stockpilot-fusion/` (hors dépôt) |
 
 ### 🐞 Découverte en préparant la fusion : les sauvegardes pouvaient être VIDES
@@ -108,6 +109,27 @@ sur aucun des deux postes.** Elle exige une connexion (email + mot de passe) pou
 le jeton Sanctum stocké dans `userData/sync-config.json` ; sans ce fichier, `runSync`
 sort immédiatement sur `not_configured`.
 
+## 🚀 v1.4.0 publiée le 17/08 — auto-update vérifié
+
+Franck a demandé de publier pour que les deux postes reçoivent la mise à jour.
+
+- Tag `v1.4.0` sur `213e49f`, workflow **Build & Release Windows** vert.
+- Release **non-draft**, visible comme `Latest`.
+- Chaîne d'auto-update vérifiée **en anonyme** (c'est ainsi qu'`electron-updater`
+  l'interroge, et c'est ce qui avait piégé le projet quand le dépôt était privé) :
+  `latest.yml` → **HTTP 200**, `version: 1.4.0` ; `StockPilot-Windows-1.4.0-Setup.exe`
+  → **HTTP 206**, 95 673 137 octets.
+
+> ⚠️ **Publier met à jour le LOGICIEL, pas les DONNÉES.** La synchro reste une action
+> manuelle : il faut se connecter dans l'app pour qu'elle obtienne son jeton. Ne pas
+> l'activer sur les deux postes avant que la fusion soit faite et restaurée — sinon
+> chaque poste pousse ses données de son côté et on retombe sur les collisions de
+> référence.
+
+**Ce que la 1.4.0 débloque concrètement :** le bouton **Sauvegarder** fonctionne enfin
+(correctif WAL). Franck peut donc envoyer les deux bases avec le bouton, sans avoir à
+copier les trois fichiers à la main.
+
 ## ⏳ Ce qui bloque
 
 **Franck doit envoyer les deux fichiers `stockpilot.db`.** Les données sont sur deux
@@ -117,7 +139,9 @@ fichiers sur le serveur.
 
 ## Ordre impératif de la suite
 
-1. ⏳ Récupérer les 2 `.db` (voir l'avertissement WAL ci-dessus).
+1. ⏳ Récupérer les 2 `.db`. **Depuis la 1.4.0, le bouton Sauvegarder suffit** (une fois
+   la mise à jour installée sur le poste). Sur un poste encore en 1.3.3, copier les trois
+   fichiers à la main — voir l'avertissement WAL ci-dessus.
 2. **Inspecter** puis **fusionner** avec `/home/admin/stockpilot-fusion/fusion.mjs`
    — outil **écrit et testé**, voir le README de ce dossier.
 3. Restaurer la base fusionnée sur les deux postes (bouton **Restaurer**).
