@@ -1,9 +1,11 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { randomUUID } from 'node:crypto'
 import { getDb } from '../db/index'
 import {
   warehouses, products, suppliers, customers,
   purchaseOrders, purchaseOrderItems, cartonSizeCompositions, orderPayments,
   receptions, receptionItems, transfers, transferItems,
+  sales, saleItems, salePayments, stockMovements,
   syncMeta,
 } from '../db/schema'
 import {
@@ -11,16 +13,30 @@ import {
 } from './sync-config.service'
 
 // ─── Synchronisation offline-first avec l'API en ligne ───────────────────────
-// Stratégie « dernière écriture gagne » (comparaison des updatedAt), un seul
-// poste actif pour l'instant. La synchro est ADDITIVE : les suppressions
-// (deletedAt) locales ne sont jamais poussées vers l'API, et les enregistrements
-// soft-supprimés localement sont simplement exclus du push.
+// Stratégie « dernière écriture gagne » (comparaison des updatedAt), pensée pour
+// PLUSIEURS postes (le client en a deux : bureau + portable).
+//
+// Les suppressions circulent dans les deux sens pour les entités que le desktop
+// sait supprimer (warehouses, suppliers, customers, products, purchase_orders,
+// sales) : la suppression locale part en DELETE, l'API la conserve en soft delete
+// et la ressert à l'autre poste via withTrashed. receptions/transfers ne sont pas
+// supprimables côté desktop, donc canDelete: false.
+//
+// ⚠️ Tout repose sur updatedAt : une ligne modifiée sans que son updatedAt bouge
+// serait invisible à la synchro. Six tables sont couvertes par des triggers SQLite
+// `AFTER UPDATE` (voir db/migrations.ts) : warehouses, products, suppliers,
+// customers, purchase_orders, sales. Les autres n'en ont pas — d'où le bump manuel
+// explicite dans ReceptionService.update. Toute nouvelle table synchronisable doit
+// avoir l'un ou l'autre.
 //
 // Ordre impératif (contraintes FK) : warehouses/suppliers/customers/products,
 // puis purchase_orders(+items+sizes), puis order_payments, puis receptions
-// (+items), puis transfers(+items). stock_movements n'est JAMAIS synchronisé
-// directement (effet de bord côté API, comme en local) — voir CONTEXT / rapport
-// pour la limitation connue de cette v1 (voir bas de fichier).
+// (+items), puis transfers(+items), puis sales(+items+payments).
+//
+// stock_movements n'est jamais transporté tel quel : chaque poste le REJOUE
+// localement à partir de l'entité tirée (réception, transfert, vente), exactement
+// comme le service métier l'aurait fait à la saisie. Sans ce rejeu, le second
+// poste voyait la réception mais gardait un stock faux.
 
 // ─── Types des réponses API (camelCase — convertis par CamelCaseResponseMiddleware) ───
 
@@ -80,6 +96,22 @@ interface ApiTransferItem {
 interface ApiTransfer {
   id: string; fromWarehouseId: string; toWarehouseId: string; transferDate: string; notes: string | null
   createdAt: string; updatedAt: string; deletedAt: string | null; items: ApiTransferItem[]
+}
+interface ApiSaleItem {
+  id: string; saleId: string; productId: string; size: string; quantity: number
+  unitPriceFcfa: number; createdAt: string; updatedAt: string
+}
+interface ApiSalePayment {
+  id: string; saleId: string; amountFcfa: number; paymentDate: string; notes: string | null
+  createdAt: string; updatedAt: string; deletedAt?: string | null
+}
+interface ApiSale {
+  id: string; reference: string; customerId: string | null; warehouseId: string
+  saleDate: string; saleType: 'wholesale' | 'retail'
+  totalAmountFcfa: number; paidAmountFcfa: number
+  status: 'pending' | 'partial' | 'paid'; notes: string | null
+  createdAt: string; updatedAt: string; deletedAt: string | null
+  items: ApiSaleItem[]; payments: ApiSalePayment[]
 }
 
 // ─── Utilitaires bas niveau ───────────────────────────────────────────────────
@@ -256,6 +288,8 @@ function countLocalChangesSince(since: string | null): number {
   bump(db.select({ updatedAt: orderPayments.updatedAt }).from(orderPayments).all())
   bump(db.select({ updatedAt: receptions.updatedAt }).from(receptions).all())
   bump(db.select({ updatedAt: transfers.updatedAt }).from(transfers).all())
+  bump(db.select({ updatedAt: sales.updatedAt }).from(sales).all())
+  bump(db.select({ updatedAt: salePayments.updatedAt }).from(salePayments).all())
   return count
 }
 
@@ -263,13 +297,21 @@ function countLocalChangesSince(since: string | null): number {
 
 interface SyncEntityOpts<
   LocalRow extends { id: string; updatedAt: string; deletedAt: string | null },
-  ApiRow extends { id: string; updatedAt: string },
+  ApiRow extends { id: string; updatedAt: string; deletedAt?: string | null },
 > {
   cfg:      SyncConfig
   name:     string
   endpoint: string
   /** false pour les entités create-only côté API (receptions, transfers) — jamais de PUT. */
   canUpdate: boolean
+  /**
+   * true quand l'API expose un DELETE /{endpoint}/{id}. Une suppression locale est
+   * alors propagée, puis redescendue à l'autre poste sous forme de tombstone
+   * (l'API liste ses lignes supprimées avec withTrashed). Sans ça la suppression
+   * restait prisonnière du poste qui l'avait faite.
+   * false pour receptions/transfers, que le desktop ne sait de toute façon pas supprimer.
+   */
+  canDelete: boolean
   localRows: LocalRow[]
   remoteRows: ApiRow[]
   toApiBody: (row: LocalRow) => Record<string, unknown>
@@ -279,15 +321,23 @@ interface SyncEntityOpts<
 
 async function syncSimpleEntity<
   LocalRow extends { id: string; updatedAt: string; deletedAt: string | null },
-  ApiRow extends { id: string; updatedAt: string },
+  ApiRow extends { id: string; updatedAt: string; deletedAt?: string | null },
 >(opts: SyncEntityOpts<LocalRow, ApiRow>): Promise<{ pushed: number; pulled: number }> {
   const remoteById = new Map(opts.remoteRows.map((r) => [r.id, r]))
   let pushed = 0
 
   for (const local of opts.localRows) {
-    if (local.deletedAt) continue // additive-only : pas de propagation des suppressions locales
     const remote = remoteById.get(local.id)
     try {
+      if (local.deletedAt) {
+        // La ligne n'existe à l'API que si elle y a déjà été poussée ; et on ne
+        // redemande pas une suppression déjà enregistrée là-bas.
+        if (opts.canDelete && remote && !remote.deletedAt) {
+          await apiDelete(opts.cfg, `${opts.endpoint}/${local.id}`)
+          pushed++
+        }
+        continue
+      }
       if (!remote) {
         await apiPost(opts.cfg, opts.endpoint, opts.toApiBody(local))
         pushed++
@@ -341,7 +391,7 @@ async function syncWarehouses(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'warehouses', endpoint: '/warehouses', canUpdate: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'warehouses', endpoint: '/warehouses', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
 }
 
 async function syncSuppliers(cfg: SyncConfig, errors: string[]) {
@@ -372,7 +422,7 @@ async function syncSuppliers(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'suppliers', endpoint: '/suppliers', canUpdate: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'suppliers', endpoint: '/suppliers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
 }
 
 async function syncCustomers(cfg: SyncConfig, errors: string[]) {
@@ -403,7 +453,7 @@ async function syncCustomers(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
 }
 
 async function syncProducts(cfg: SyncConfig, errors: string[]) {
@@ -438,7 +488,7 @@ async function syncProducts(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'products', endpoint: '/products', canUpdate: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'products', endpoint: '/products', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
 }
 
 // ─── Commandes fournisseur (+ items + tailles) ────────────────────────────────
@@ -533,7 +583,7 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[]): Promise<{ 
   }
 
   const result = await syncSimpleEntity({
-    cfg, name: 'purchase_orders', endpoint: '/purchase-orders', canUpdate: true,
+    cfg, name: 'purchase_orders', endpoint: '/purchase-orders', canUpdate: true, canDelete: true,
     localRows: localOrders, remoteRows: remoteOrders, toApiBody, applyRemoteToLocal, errors,
   })
 
@@ -638,12 +688,14 @@ async function syncReceptions(cfg: SyncConfig, errors: string[]) {
         .onConflictDoNothing()
         .run()
     }
+
+    replayReceptionMovements(remote)
   }
 
   return syncSimpleEntity({
     // canUpdate: true → les modifications d'arrivage (super-admin) sont poussées
     // en PUT /receptions/{id}. Requiert le endpoint update côté API.
-    cfg, name: 'receptions', endpoint: '/receptions', canUpdate: true,
+    cfg, name: 'receptions', endpoint: '/receptions', canUpdate: true, canDelete: false,
     localRows: localReceptions, remoteRows, toApiBody, applyRemoteToLocal, errors,
   })
 }
@@ -689,12 +741,232 @@ async function syncTransfers(cfg: SyncConfig, errors: string[]) {
         .onConflictDoNothing()
         .run()
     }
+
+    replayTransferMovements(remote)
   }
 
   return syncSimpleEntity({
-    cfg, name: 'transfers', endpoint: '/transfers', canUpdate: false,
+    cfg, name: 'transfers', endpoint: '/transfers', canUpdate: false, canDelete: false,
     localRows: localTransfers, remoteRows, toApiBody, applyRemoteToLocal, errors,
   })
+}
+
+// ─── Rejeu local des mouvements de stock ─────────────────────────────────────
+// Une entité tirée de l'API (réception, transfert, vente) doit produire ICI les
+// mêmes mouvements que si elle avait été saisie sur ce poste. Sans ce rejeu, le
+// second poste affichait bien la réception ou la vente, mais son stock restait
+// faux — c'était la limitation la plus coûteuse de la v1.
+//
+// `hasMovementsFor` rend le rejeu idempotent : la synchro tourne toutes les
+// 3 min et ne doit jamais empiler deux fois les mêmes mouvements.
+
+function hasMovementsFor(referenceId: string): boolean {
+  return getDb()
+    .select({ id: stockMovements.id })
+    .from(stockMovements)
+    .where(eq(stockMovements.referenceId, referenceId))
+    .get() !== undefined
+}
+
+/** Réception tirée → mouvements `reception` positifs, une ligne par pointure.
+ *  Réplique exacte de ReceptionService.generateStockMovements. */
+function replayReceptionMovements(remote: ApiReception): void {
+  if (remote.deletedAt || hasMovementsFor(remote.id)) return
+  const db = getDb()
+
+  for (const item of remote.items ?? []) {
+    const orderItem = db
+      .select().from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.id, item.orderItemId)).get()
+    if (!orderItem) continue // la commande n'est pas encore descendue : on retentera au prochain tour
+
+    const sizes = db
+      .select().from(cartonSizeCompositions)
+      .where(eq(cartonSizeCompositions.orderItemId, item.orderItemId)).all()
+
+    const unitCostFcfa = Math.round(orderItem.unitCostPerCartonFcfa / orderItem.pairsPerCarton)
+
+    for (const size of sizes) {
+      db.insert(stockMovements).values({
+        id:            randomUUID(),
+        productId:     orderItem.productId,
+        warehouseId:   remote.warehouseId,
+        size:          size.size,
+        quantity:      size.pairsCount * item.cartonsReceived,
+        movementType:  'reception',
+        referenceId:   remote.id,
+        referenceType: 'reception',
+        unitCostFcfa,
+        movementDate:  remote.receptionDate,
+      }).run()
+    }
+  }
+}
+
+/** Transfert tiré → une sortie de l'entrepôt source + une entrée dans le destinataire. */
+function replayTransferMovements(remote: ApiTransfer): void {
+  if (remote.deletedAt || hasMovementsFor(remote.id)) return
+  const db = getDb()
+
+  for (const item of remote.items ?? []) {
+    db.insert(stockMovements).values({
+      id: randomUUID(), productId: item.productId, warehouseId: remote.fromWarehouseId,
+      size: item.size, quantity: -item.pairsCount, movementType: 'transfer_out',
+      referenceId: remote.id, referenceType: 'transfer', movementDate: remote.transferDate,
+    }).run()
+
+    db.insert(stockMovements).values({
+      id: randomUUID(), productId: item.productId, warehouseId: remote.toWarehouseId,
+      size: item.size, quantity: item.pairsCount, movementType: 'transfer_in',
+      referenceId: remote.id, referenceType: 'transfer', movementDate: remote.transferDate,
+    }).run()
+  }
+}
+
+/** Vente tirée → sortie de stock, comme SaleService.create. */
+function replaySaleMovements(remote: ApiSale): void {
+  if (hasMovementsFor(remote.id)) return
+  const db = getDb()
+
+  for (const item of remote.items ?? []) {
+    db.insert(stockMovements).values({
+      id: randomUUID(), productId: item.productId, warehouseId: remote.warehouseId,
+      size: item.size, quantity: -item.quantity, movementType: 'sale',
+      referenceId: remote.id, referenceType: 'sale', movementDate: remote.saleDate,
+    }).run()
+  }
+}
+
+/** Vente supprimée sur l'autre poste → on réinjecte les paires, comme SaleService.delete.
+ *  On repart des mouvements réellement enregistrés plutôt que de recalculer : si la
+ *  vente n'avait jamais bougé le stock ici, il n'y a rien à annuler. */
+function replaySaleCancellation(remote: ApiSale): void {
+  const db = getDb()
+
+  const alreadyCancelled = db
+    .select({ id: stockMovements.id }).from(stockMovements)
+    .where(and(eq(stockMovements.referenceId, remote.id), eq(stockMovements.movementType, 'adjustment')))
+    .get()
+  if (alreadyCancelled) return
+
+  const sold = db
+    .select().from(stockMovements)
+    .where(and(eq(stockMovements.referenceId, remote.id), eq(stockMovements.movementType, 'sale')))
+    .all()
+  if (sold.length === 0) return
+
+  const today = new Date().toISOString().slice(0, 10)
+  for (const movement of sold) {
+    db.insert(stockMovements).values({
+      id: randomUUID(), productId: movement.productId, warehouseId: movement.warehouseId,
+      size: movement.size, quantity: -movement.quantity, // la vente est négative → on remet le positif
+      movementType: 'adjustment', referenceId: remote.id, referenceType: 'sale',
+      movementDate: today, notes: 'Annulation vente',
+    }).run()
+  }
+}
+
+// ─── Ventes (+ lignes + règlements) ──────────────────────────────────────────
+
+async function syncSales(cfg: SyncConfig, errors: string[]): Promise<{ pushed: number; pulled: number }> {
+  const db = getDb()
+  const localSales = db.select().from(sales).all()
+  const remoteRows = (await apiGet<ApiSale[]>(cfg, '/sales')) ?? []
+
+  const itemsBySale    = groupBy(db.select().from(saleItems).all(),    (i) => i.saleId)
+  const paymentsBySale = groupBy(db.select().from(salePayments).all(), (p) => p.saleId)
+
+  const toApiBody = (s: (typeof localSales)[number]): Record<string, unknown> => {
+    const items = (itemsBySale.get(s.id) ?? []).map((i) => ({
+      id: i.id, productId: i.productId, size: i.size,
+      quantity: i.quantity, unitPriceFcfa: i.unitPriceFcfa,
+    }))
+    const payments = (paymentsBySale.get(s.id) ?? [])
+      .filter((p) => !p.deletedAt)
+      .map((p) => ({ id: p.id, amountFcfa: p.amountFcfa, paymentDate: p.paymentDate, notes: p.notes }))
+
+    return toSnakeCase({
+      id: s.id, reference: s.reference, customerId: s.customerId, warehouseId: s.warehouseId,
+      saleDate: s.saleDate, saleType: s.saleType, totalAmountFcfa: s.totalAmountFcfa,
+      paidAmountFcfa: s.paidAmountFcfa, status: s.status, notes: s.notes,
+      items, payments,
+    }) as Record<string, unknown>
+  }
+
+  const applyRemoteToLocal = async (r: ApiSale): Promise<void> => {
+    db.insert(sales)
+      .values({
+        id: r.id, reference: r.reference, customerId: r.customerId, warehouseId: r.warehouseId,
+        saleDate: r.saleDate, saleType: r.saleType, totalAmountFcfa: r.totalAmountFcfa,
+        paidAmountFcfa: r.paidAmountFcfa, status: r.status, notes: r.notes,
+        createdAt: r.createdAt, updatedAt: r.updatedAt, deletedAt: r.deletedAt,
+      })
+      .onConflictDoUpdate({
+        target: sales.id,
+        // Les lignes d'une vente ne changent jamais : seuls le règlement, le statut
+        // et les notes bougent après coup.
+        set: {
+          paidAmountFcfa: r.paidAmountFcfa, status: r.status, notes: r.notes,
+          updatedAt: r.updatedAt, deletedAt: r.deletedAt,
+        },
+      })
+      .run()
+
+    for (const item of r.items ?? []) {
+      db.insert(saleItems)
+        .values({
+          id: item.id, saleId: r.id, productId: item.productId, size: item.size,
+          quantity: item.quantity, unitPriceFcfa: item.unitPriceFcfa,
+          createdAt: item.createdAt, updatedAt: item.updatedAt,
+        })
+        .onConflictDoNothing()
+        .run()
+    }
+
+    for (const payment of r.payments ?? []) {
+      db.insert(salePayments)
+        .values({
+          id: payment.id, saleId: r.id, amountFcfa: payment.amountFcfa,
+          paymentDate: payment.paymentDate, notes: payment.notes,
+          createdAt: payment.createdAt, updatedAt: payment.updatedAt,
+        })
+        .onConflictDoNothing()
+        .run()
+    }
+
+    // Le stock doit suivre : soit la vente sort les paires, soit sa suppression les rend.
+    if (r.deletedAt) replaySaleCancellation(r)
+    else replaySaleMovements(r)
+  }
+
+  const result = await syncSimpleEntity({
+    cfg, name: 'sales', endpoint: '/sales', canUpdate: true, canDelete: true,
+    localRows: localSales, remoteRows, toApiBody, applyRemoteToLocal, errors,
+  })
+
+  // Les règlements ajoutés APRÈS la création de la vente ne partent pas avec le PUT
+  // (qui ne porte que l'en-tête) : on les pousse un par un, comme pour les commandes.
+  const remoteSaleIds  = new Set(remoteRows.map((r) => r.id))
+  const remotePaymentIds = new Set(remoteRows.flatMap((r) => (r.payments ?? []).map((p) => p.id)))
+  let pushed = result.pushed
+
+  for (const [saleId, payments] of paymentsBySale) {
+    if (!remoteSaleIds.has(saleId)) continue // la vente elle-même vient d'être créée : ses règlements sont déjà partis
+    for (const payment of payments) {
+      if (payment.deletedAt || remotePaymentIds.has(payment.id)) continue
+      try {
+        await apiPost(cfg, `/sales/${saleId}/payments`, toSnakeCase({
+          id: payment.id, amountFcfa: payment.amountFcfa,
+          paymentDate: payment.paymentDate, notes: payment.notes,
+        }))
+        pushed++
+      } catch (e) {
+        errors.push(`sale_payments ${payment.id}: ${errMessage(e)}`)
+      }
+    }
+  }
+
+  return { pushed, pulled: result.pulled }
 }
 
 // ─── Orchestration ─────────────────────────────────────────────────────────────
@@ -748,6 +1020,9 @@ export async function runSync(): Promise<SyncSummary> {
 
     // 5) Transferts (dépend des entrepôts + produits)
     const tr = await syncTransfers(cfg, errors); pushed += tr.pushed; pulled += tr.pulled
+
+    // 6) Ventes (dépend des clients, produits et entrepôts)
+    const sa = await syncSales(cfg, errors); pushed += sa.pushed; pulled += sa.pulled
 
     setLastSyncedAt(new Date().toISOString())
 
