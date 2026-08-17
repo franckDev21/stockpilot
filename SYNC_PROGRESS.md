@@ -88,6 +88,26 @@ stock au pull** (`replayReceptionMovements`, `replayTransferMovements`,
 - Données de recette purgées, prod revenue à son état initial, jeton de test révoqué
 - ❌ **UI jamais exercée** (pas d'Electron sur le serveur de dev) — angle mort habituel
 
+## 🌐 L'infrastructure en ligne est saine (vérifié le 17/08)
+
+Le réseau n'a **jamais** été le problème — il ne faut pas repartir sur cette piste.
+
+- `https://stockpilot.feujio.com` → **HTTP 200**, certificat Let's Encrypt valide
+  jusqu'au **19 octobre 2026**, redirection HTTP→HTTPS.
+- Le bloc serveur est **dans `/etc/nginx/sites-enabled/feujio.com`** (pas de fichier
+  `stockpilot` séparé — un `grep` naïf ne le trouve pas, et sans `sudo` il échoue en
+  silence). Il proxifie vers `127.0.0.1:8090`.
+- `/api/v1/sales`, `/purchase-orders`, `/products` répondent **401** (route vivante et
+  protégée) et non 404.
+- L'URL par défaut compilée dans l'app (`DEFAULT_API_URL` dans `sync-config.service.ts`)
+  est précisément `https://stockpilot.feujio.com`. Elle est donc correcte.
+- IP publique : `187.124.71.140`, toujours celle du secret `DEPLOY_HOST`.
+
+**Conclusion : si la base en ligne est vide, c'est que la synchro n'a jamais été activée
+sur aucun des deux postes.** Elle exige une connexion (email + mot de passe) pour obtenir
+le jeton Sanctum stocké dans `userData/sync-config.json` ; sans ce fichier, `runSync`
+sort immédiatement sur `not_configured`.
+
 ## ⏳ Ce qui bloque
 
 **Franck doit envoyer les deux fichiers `stockpilot.db`.** Les données sont sur deux
