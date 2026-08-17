@@ -3,6 +3,62 @@
 **Démarré le 2026-08-17.** Fichier de reprise : si la session est coupée, tout ce qu'il
 faut savoir pour continuer est ici.
 
+---
+
+## 📌 POINT DE REPRISE — 17/08/2026, fin de session
+
+### Où on en est en une phrase
+
+Tout ce qui dépend du serveur est **fait, testé et en production**. Le sujet de fond — la
+fusion des deux bases — **n'a pas avancé d'un pouce**, parce qu'il attend deux fichiers
+qui sont sur des machines Windows inaccessibles depuis ce serveur.
+
+### État vérifié (dernière mesure de la session)
+
+| | |
+|---|---|
+| Dépôt desktop | propre, `main` = `origin/main`, dernier commit `2061d23`, version **1.5.0** |
+| Dépôt API | propre, `main` = `origin/main`, dernier commit `e5f26f9` |
+| API en production | `https://stockpilot.feujio.com` → health **200**, `/backups` **401**, `/sales` **401** |
+| Release publiée | **v1.5.0** — `latest.yml` → **200** / `version: 1.5.0`, `.exe` → **206** (anonyme) |
+| Base de production | **0 base reçue, 0 vente, 0 commande, 0 jeton client** |
+
+**Traduction de la dernière ligne : aucun poste ne s'est jamais connecté.** Ni synchro
+activée, ni base envoyée. Les données du client sont encore uniquement sur ses deux
+machines.
+
+### Les 3 choses à faire à la reprise, dans cet ordre
+
+1. **Demander à Franck où en sont les postes** : affichent-ils **1.5.0** après redémarrage
+   complet ? Le bouton « Envoyer au serveur » a-t-il été essayé, et qu'a-t-il donné ?
+2. **Récupérer les deux bases** — par le nouveau bouton, ou par `scp` vers
+   `/home/admin/stockpilot-fusion/bases/` (`posteA.db` = bureau, `posteB.db` = portable).
+3. **Inspecter puis fusionner** avec `/home/admin/stockpilot-fusion/fusion.mjs`.
+   Si l'inspection ne signale **aucune collision de référence**, la fusion hors-ligne
+   devient inutile : il suffit d'activer la synchro sur les deux postes et ils
+   convergeront seuls. Sinon, fusionner puis restaurer.
+
+### Le piège à ne pas réintroduire
+
+**Ne pas activer la synchro sur les deux postes avant que la fusion soit tranchée.** Les
+bases ont divergé séparément : un même produit ou une même vente peut y porter la même
+référence avec un identifiant différent. Le second poste qui synchroniserait se prendrait
+une **500** sur l'index unique — sans perte de données, mais avec une synchro incomplète
+et des erreurs illisibles.
+
+### L'angle mort assumé
+
+`uploadDatabase()` (le bouton « Envoyer au serveur ») **n'a jamais été exécuté** : le banc
+de test est tombé sur un blocage de session. Typechecké et compilé, rien de plus. C'est le
+seul livrable de la journée dans ce cas. Si ça plante côté client : console de l'app
+(`Ctrl+Shift+I`), scénario **S9** de [`MISE_EN_LIGNE.md`](./MISE_EN_LIGNE.md), et repli sur
+le bouton **Sauvegarder**, lui éprouvé.
+
+Plus généralement, **aucune interface n'est jamais exercée** sur ce serveur : pas
+d'Electron. Tout ce qui est affirmé ici l'est au niveau des données et de l'API.
+
+---
+
 ## Le problème
 
 Le client travaille sur **deux installations** de StockPilot : le PC de son bureau et le
