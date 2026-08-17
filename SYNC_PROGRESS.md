@@ -40,7 +40,30 @@ synchronisable doit avoir l'un ou l'autre.**
 | | |
 |---|---|
 | API — commit | `2c1e1dc` sur `main`, **CI verte, DÉPLOYÉE en prod** |
-| Desktop — commit | `c1a4084` sur `main`, poussé, **PAS ENCORE TAGGUÉ** |
+| Desktop — synchro | `c1a4084` sur `main`, poussé, **PAS ENCORE TAGGUÉ** |
+| Desktop — sauvegarde WAL | `b8039a8` sur `main` |
+| Outil de fusion | `/home/admin/stockpilot-fusion/` (hors dépôt) |
+
+### 🐞 Découverte en préparant la fusion : les sauvegardes pouvaient être VIDES
+
+`backup:save` faisait `fs.copyFileSync(getDbPath(), ...)`. Or la base tourne en
+`journal_mode = WAL` : tout ce qui n'a pas encore été basculé depuis `stockpilot.db-wal`
+**manque à la sauvegarde**. Cas réellement rencontré ici : fichier principal de 4 Ko,
+WAL de 873 Ko → sauvegarde obtenue à **0 table**.
+
+`backup:restore` était pire : il écrasait `stockpilot.db` pendant que l'app la tenait
+ouverte, en laissant les `-wal`/`-shm` de l'**ancienne** base, que SQLite réapplique au
+redémarrage par-dessus la nouvelle.
+
+Corrigé en `b8039a8` : `.backup()` (API de sauvegarde en ligne de SQLite) à l'écriture,
+fermeture + suppression des fichiers annexes à la restauration, refus d'un fichier qui
+n'est pas une base StockPilot, et mise de côté de l'ancienne base en
+`stockpilot.db.avant-restauration`. Vérifié sur le cas réel : 0 table → 17 tables,
+données complètes, `integrity_check` ok, sans aucun fichier annexe.
+
+> ⚠️ **Conséquence directe : les deux `.db` doivent être exportés depuis une version
+> ≥ 1.4.0**, sinon ils risquent d'être incomplets. Avec une version antérieure, copier
+> **les trois** fichiers (`stockpilot.db`, `-wal`, `-shm`) depuis `userData`.
 
 **API** : 3 tables de ventes (migration `..._000014_create_sales_tables`, déjà exécutée
 en prod), modèles `Sale`/`SaleItem`/`SalePayment`, `SaleController` complet (index, show,
@@ -74,11 +97,25 @@ fichiers sur le serveur.
 
 ## Ordre impératif de la suite
 
-1. ⏳ Récupérer les 2 `.db`.
-2. **Inspecter** puis **fusionner** hors-ligne avec `/home/admin/stockpilot-fusion/fusion.mjs`
-   (voir le README de ce dossier).
-3. Restaurer la base fusionnée sur les deux postes (bouton **Restaurer**, `backup:restore`).
+1. ⏳ Récupérer les 2 `.db` (voir l'avertissement WAL ci-dessus).
+2. **Inspecter** puis **fusionner** avec `/home/admin/stockpilot-fusion/fusion.mjs`
+   — outil **écrit et testé**, voir le README de ce dossier.
+3. Restaurer la base fusionnée sur les deux postes (bouton **Restaurer**).
 4. **Seulement ensuite**, tagger une version → l'auto-update fait le reste.
+
+### L'outil de fusion est prêt
+
+`/home/admin/stockpilot-fusion/` — `fusion.mjs inspect` (ne modifie rien, signale les
+collisions de référence à trancher à la main) et `fusion.mjs merge` (union, dernière
+écriture gagne, aucune suppression). Testé de bout en bout sur deux bases réellement
+divergentes : `integrity_check` ok, 0 violation de clé étrangère.
+
+⚠️ Piège trouvé au test : **`stock_movements` ne se fusionne pas par UUID.** Chaque poste
+génère ses propres lignes pour un même événement réel (4 sur A, 4 sur B pour la même
+vente) — une union naïve **doublerait le stock**. L'outil raisonne par `reference_id` :
+si A a déjà des mouvements pour cette référence, les siens font foi. Les mouvements sans
+référence (ajustements manuels) se fusionnent normalement. Vérifié : stock net identique
+avant et après fusion.
 
 > ⚠️ **Ne pas activer la synchro sur les deux postes avant la fusion.** Les deux bases ont
 > divergé séparément : si un même produit ou une même vente y existe avec la même
