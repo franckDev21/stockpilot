@@ -130,7 +130,18 @@ Franck a demandé de publier pour que les deux postes reçoivent la mise à jour
 (correctif WAL). Franck peut donc envoyer les deux bases avec le bouton, sans avoir à
 copier les trois fichiers à la main.
 
-## 📤 Envoi de la base au serveur — ÉCRIT MAIS NON COMMITÉ (17/08)
+## 📤 Envoi de la base au serveur — LIVRÉ en v1.5.0 (17/08)
+
+> ✅ **Tout est commité, poussé, déployé et publié.** API : `e5f26f9`, déploiement CI vert,
+> health 200 et `/backups` → 401. Desktop : `8959db4` + `95ada2d`, tag **`v1.5.0`**,
+> build Windows vert. Auto-update vérifié **en anonyme** : `latest.yml` → HTTP 200 /
+> `version: 1.5.0`, `StockPilot-Windows-1.5.0-Setup.exe` → HTTP 206, 95 674 269 octets.
+>
+> ⚠️ **Reste l'angle mort** : `uploadDatabase()` n'a jamais tourné au runtime. À faire
+> essayer sur un vrai poste dès l'installation de la 1.5.0 — voir le scénario **S9** de
+> [`MISE_EN_LIGNE.md`](./MISE_EN_LIGNE.md). En secours, le bouton **Sauvegarder** (éprouvé).
+
+### Détail (état au moment de l'écriture)
 
 Franck a demandé une fonctionnalité qui envoie les bases au serveur automatiquement,
 plutôt que par `scp` à la main.
