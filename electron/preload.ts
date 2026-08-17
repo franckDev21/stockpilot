@@ -119,6 +119,8 @@ const api = {
   backup: {
     save:    (): Promise<{ success: boolean; path?: string }> => invoke('backup:save'),
     restore: (): Promise<{ success: boolean }>                => invoke('backup:restore'),
+    upload:  (opts: { posteLabel: string; credentials?: { apiUrl: string; email: string; password: string } }) =>
+      invoke('backup:upload', opts) as Promise<{ success: boolean; message?: string; sizeBytes?: number; backupId?: string }>,
   },
 
   print: {

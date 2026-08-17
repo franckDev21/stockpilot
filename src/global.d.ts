@@ -162,6 +162,8 @@ declare interface Window {
     backup: {
       save:    () => Promise<{ success: boolean; path?: string }>
       restore: () => Promise<{ success: boolean }>
+      upload:  (opts: { posteLabel: string; credentials?: { apiUrl: string; email: string; password: string } })
+        => Promise<{ success: boolean; message?: string; sizeBytes?: number; backupId?: string }>
     }
     print: {
       toPDF: (options?: { filename?: string }) => Promise<{ success: boolean; path?: string }>

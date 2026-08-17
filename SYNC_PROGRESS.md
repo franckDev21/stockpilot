@@ -130,6 +130,54 @@ Franck a demandé de publier pour que les deux postes reçoivent la mise à jour
 (correctif WAL). Franck peut donc envoyer les deux bases avec le bouton, sans avoir à
 copier les trois fichiers à la main.
 
+## 📤 Envoi de la base au serveur — ÉCRIT MAIS NON COMMITÉ (17/08)
+
+Franck a demandé une fonctionnalité qui envoie les bases au serveur automatiquement,
+plutôt que par `scp` à la main.
+
+**⚠️ RIEN N'EST COMMITÉ, dans aucun des deux dépôts.** Une protection de session a bloqué
+toutes les commandes shell (y compris en lecture) avant que je puisse commiter. Reprendre
+en mode d'autorisation par défaut, ou dans une session neuve.
+
+**⚠️ Le plus urgent : côté API, le code est ACTIF EN PROD sans être commité** (bind mount
+`.:/var/www/html`), et la migration `database_backups` **a déjà tourné**. Or le
+déploiement fait un `git pull` — c'est exactement ce qui avait tout bloqué le 31/07.
+Commiter l'API **en premier**.
+
+Fichiers en attente — **API** : `database/migrations/2024_01_01_000015_create_database_backups_table.php`,
+`app/Models/DatabaseBackup.php`, `app/Http/Controllers/DatabaseBackupController.php`,
+`routes/api.php`, `docker/php/uploads.ini`, `docker/nginx/default.conf`, `docker-compose.yml`.
+**Desktop** : `electron/services/backup-upload.service.ts`, `electron/handlers/backup.handler.ts`,
+`electron/preload.ts`, `src/global.d.ts`, `src/components/layout/SendDatabaseModal.tsx`,
+`src/components/layout/Header.tsx`, `MISE_EN_LIGNE.md`.
+
+**Ce que ça fait** : bouton « Envoyer au serveur » dans le bandeau → modale (nom du poste)
+→ `.backup()` puis envoi multipart vers `POST /api/v1/backups`. Le fichier atterrit dans
+`storage/app/private/backups/` (monté en bind). Volontairement **découplé de la synchro** :
+sans config, il demande les identifiants et obtient un jeton **sans le persister**, donc
+envoyer sa base ne déclenche jamais la synchro périodique.
+
+**Limites d'upload relevées** : PHP était à `upload_max_filesize=2M` / `post_max_size=8M`
+— le vrai bloquant. Désormais 128M via `docker/php/uploads.ini` monté dans le conteneur.
+Chaîne : nginx public **50M** (inchangé, fichier système hors dépôt) → nginx conteneur
+128M → PHP 128M. **Le plafond effectif est donc 50 Mo.**
+
+**Niveau de vérification** :
+- ✅ **API prouvée** sur le domaine public : refus d'un non-SQLite (422), envoi (201),
+  fichier arrivé **octet pour octet identique** (même sha256, `integrity_check` ok),
+  liste, téléchargement conforme, suppression nettoyant fichier + enregistrement.
+  Données de test purgées, compte et jetons de test supprimés.
+- ⚠️ **Desktop : compilé et typechecké seulement.** `uploadDatabase()` n'a **jamais été
+  exécuté** — le banc est tombé sur le blocage. C'est le point le plus fragile de la
+  journée ; voir le scénario **S9** de [`MISE_EN_LIGNE.md`](./MISE_EN_LIGNE.md).
+
+**Version à publier** : bumper en **1.5.0** (la 1.4.0 publiée ne contient pas ce bouton).
+
+## 🧯 Procédure et pannes
+
+Voir [`MISE_EN_LIGNE.md`](./MISE_EN_LIGNE.md) : ordre exact de mise en ligne avec les
+vérifications, 16 scénarios d'échec (diagnostic + résolution), et les retours en arrière.
+
 ## ⏳ Ce qui bloque
 
 **Franck doit envoyer les deux fichiers `stockpilot.db`.** Les données sont sur deux

@@ -1,11 +1,12 @@
 import { useState, useEffect }  from 'react'
-import { Package, ArrowLeft, Sparkles, Loader2, AlertTriangle, Download, UploadCloud, CheckCircle2, FileText, Moon, Sun, LogOut, Trash2 } from 'lucide-react'
+import { Package, ArrowLeft, Sparkles, Loader2, AlertTriangle, Download, UploadCloud, CheckCircle2, FileText, Moon, Sun, LogOut, Trash2, Server } from 'lucide-react'
 import { useAppStore }           from '@/store/app.store'
 import { useAuthStore }          from '@/store/auth-store'
 import { usePrint }              from '@/hooks/usePrint'
 import { useDarkMode }           from '@/hooks/useDarkMode'
 import { formatDate }            from '@/lib/utils'
 import { SyncStatus }            from './SyncStatus'
+import { SendDatabaseModal }     from './SendDatabaseModal'
 
 interface LowStockItem { productId: string; productName: string; reference: string; totalPairs: number; threshold: number }
 
@@ -49,6 +50,8 @@ export function Header() {
       setSeeding(false)
     }
   }
+
+  const [showSend, setShowSend] = useState(false)
 
   const handleBackup = async () => {
     setBacking(true)
@@ -171,6 +174,19 @@ export function Header() {
             Restaurer
           </button>
 
+          {/* Envoi de la base vers le serveur (réunion des données de plusieurs postes) */}
+          <button
+            onClick={() => setShowSend(true)}
+            title="Envoyer la base de ce poste au serveur"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg
+                       bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300
+                       border border-slate-200 dark:border-slate-600
+                       hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+          >
+            <Server className="w-3.5 h-3.5" />
+            Envoyer au serveur
+          </button>
+
           <div className="w-px h-5 bg-slate-200 dark:bg-slate-700" />
 
           {/* Demo seed button */}
@@ -264,6 +280,7 @@ export function Header() {
           </ul>
         </div>
       )}
+      {showSend && <SendDatabaseModal onClose={() => setShowSend(false)} />}
     </>
   )
 }

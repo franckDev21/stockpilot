@@ -3,6 +3,7 @@ import type { IpcMain } from 'electron'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import { closeDatabase, getDbPath, getSqlite } from '../db/index'
+import { uploadDatabase } from '../services/backup-upload.service'
 
 const require = createRequire(import.meta.url)
 
@@ -61,6 +62,11 @@ export function registerBackupHandlers(ipcMain: IpcMain) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
   })
+
+  ipcMain.handle('backup:upload', async (_event, opts: {
+    posteLabel: string
+    credentials?: { apiUrl: string; email: string; password: string }
+  }) => uploadDatabase(opts))
 
   ipcMain.handle('backup:restore', async (event) => {
     const win = require('electron').BrowserWindow.fromWebContents(event.sender)!
