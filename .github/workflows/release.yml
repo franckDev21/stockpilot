@@ -20,6 +20,21 @@ jobs:
 
       - run: npm ci
 
+      # Sans ce secret, l'app se construit tres bien mais reclame des
+      # identifiants a l'utilisateur au lieu d'envoyer en deux clics. Une
+      # release amputee de son jeton est indiscernable d'une release saine
+      # tant que personne n'a clique : on refuse de la publier.
+      - name: Verifier la presence du jeton d'envoi
+        shell: bash
+        run: |
+          if [ -z "${STOCKPILOT_UPLOAD_TOKEN}" ]; then
+            echo "::error::secret STOCKPILOT_UPLOAD_TOKEN absent — le bouton « Envoyer au serveur » redemanderait un mot de passe."
+            exit 1
+          fi
+          echo "Jeton d'envoi present (${#STOCKPILOT_UPLOAD_TOKEN} caracteres)."
+        env:
+          STOCKPILOT_UPLOAD_TOKEN: ${{ secrets.STOCKPILOT_UPLOAD_TOKEN }}
+
       - run: npm run release:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
