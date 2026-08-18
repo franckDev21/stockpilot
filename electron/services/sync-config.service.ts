@@ -7,6 +7,12 @@ import path from 'node:path'
 // de connexion, et le bearer token Sanctum obtenu après login. Le mot de passe
 // n'est JAMAIS persisté — seul le token qui en résulte est conservé.
 
+// Jeton embarque a la compilation (voir vite.config.ts et le workflow de
+// release). Il n'est PAS dans le depot : celui-ci est public, condition de
+// l'auto-update. Ses abilities cote serveur sont volontairement etroites —
+// deposer une base, envoyer ses donnees, tirer le bundle — et rien d'autre.
+declare const __UPLOAD_TOKEN__: string | undefined
+
 export interface SyncConfig {
   apiUrl: string
   email:  string
@@ -67,6 +73,35 @@ export function getDevDefaults(): { apiUrl: string; email: string; password: str
     email:    env.VITE_API_EMAIL || env.API_EMAIL || '',
     password: env.VITE_API_PASSWORD || env.API_PASSWORD || '',
   }
+}
+
+/** Le jeton embarque au build, ou '' si ce build n'en contient pas. */
+export function jetonPoste(): string {
+  const compile = typeof __UPLOAD_TOKEN__ === 'string' ? __UPLOAD_TOKEN__ : ''
+  if (compile) return compile
+  // En dev, un .env permet de tester sans reconstruire.
+  const env = readDotEnv()
+  return env.UPLOAD_TOKEN || env.VITE_UPLOAD_TOKEN || ''
+}
+
+/**
+ * Configuration implicite d'un poste jamais connecte : le jeton embarque suffit
+ * a envoyer ses donnees et a recuperer celles du serveur. C'est ce qui permet a
+ * la synchronisation de fonctionner sans que personne n'ait a saisir un mot de
+ * passe — et donc de fonctionner tout court, personne ne l'ayant jamais activee.
+ *
+ * Rien n'est ecrit sur le disque : ce n'est pas une configuration persistee,
+ * c'est le mode par defaut.
+ */
+export function posteConfig(): SyncConfig | null {
+  const token = jetonPoste()
+  if (!token) return null
+  return { apiUrl: getDefaultApiUrl(), email: '', token }
+}
+
+/** La configuration a utiliser : celle saisie par l'utilisateur, sinon le mode poste. */
+export function effectiveConfig(): SyncConfig | null {
+  return readConfig() ?? posteConfig()
 }
 
 export function readConfig(): SyncConfig | null {

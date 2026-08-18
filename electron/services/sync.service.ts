@@ -9,7 +9,7 @@ import {
   syncMeta,
 } from '../db/schema'
 import {
-  type SyncConfig, readConfig, writeConfig, isConfigured, clearConfig,
+  type SyncConfig, readConfig, writeConfig, isConfigured, clearConfig, effectiveConfig,
 } from './sync-config.service'
 
 // ─── Synchronisation offline-first avec l'API en ligne ───────────────────────
@@ -260,9 +260,13 @@ export function logoutFromApi(): void {
 
 // ─── sync_meta (lastSyncedAt) ─────────────────────────────────────────────────
 
-function getLastSyncedAt(): string | null {
+export function getLastSyncedAt(): string | null {
   const row = getDb().select().from(syncMeta).where(eq(syncMeta.key, 'lastSyncedAt')).get()
   return row?.value ?? null
+}
+
+export function marquerSynchronise(): void {
+  setLastSyncedAt(new Date().toISOString())
 }
 
 function setLastSyncedAt(value: string): void {
@@ -317,6 +321,13 @@ interface SyncEntityOpts<
   toApiBody: (row: LocalRow) => Record<string, unknown>
   applyRemoteToLocal: (remote: ApiRow) => Promise<void>
   errors: string[]
+  /**
+   * true quand on ne fait que descendre (bouton « Synchroniser » d'un poste qui
+   * pousse par ailleurs en bloc via /sync/push). La montée entité par entité
+   * exigerait un jeton d'écriture sur toute l'API, que l'exécutable public ne
+   * doit pas embarquer.
+   */
+  skipPush?: boolean
 }
 
 async function syncSimpleEntity<
@@ -326,7 +337,7 @@ async function syncSimpleEntity<
   const remoteById = new Map(opts.remoteRows.map((r) => [r.id, r]))
   let pushed = 0
 
-  for (const local of opts.localRows) {
+  for (const local of opts.skipPush ? [] : opts.localRows) {
     const remote = remoteById.get(local.id)
     try {
       if (local.deletedAt) {
@@ -370,10 +381,10 @@ async function syncSimpleEntity<
 
 // ─── Entités simples : warehouses, products, suppliers, customers ────────────
 
-async function syncWarehouses(cfg: SyncConfig, errors: string[]) {
+async function syncWarehouses(cfg: SyncConfig, errors: string[], fournies?: ApiWarehouse[]) {
   const db = getDb()
   const localRows = db.select().from(warehouses).all()
-  const remoteRows = (await apiGet<ApiWarehouse[]>(cfg, '/warehouses')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiWarehouse[]>(cfg, '/warehouses')) ?? []
 
   const toApiBody = (w: (typeof localRows)[number]): Record<string, unknown> =>
     toSnakeCase({ id: w.id, name: w.name, type: w.type, address: w.address, isDefault: w.isDefault }) as Record<string, unknown>
@@ -391,13 +402,13 @@ async function syncWarehouses(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'warehouses', endpoint: '/warehouses', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'warehouses', endpoint: '/warehouses', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
-async function syncSuppliers(cfg: SyncConfig, errors: string[]) {
+async function syncSuppliers(cfg: SyncConfig, errors: string[], fournies?: ApiSupplier[]) {
   const db = getDb()
   const localRows = db.select().from(suppliers).all()
-  const remoteRows = (await apiGet<ApiSupplier[]>(cfg, '/suppliers')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiSupplier[]>(cfg, '/suppliers')) ?? []
 
   const toApiBody = (s: (typeof localRows)[number]): Record<string, unknown> =>
     toSnakeCase({
@@ -422,13 +433,13 @@ async function syncSuppliers(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'suppliers', endpoint: '/suppliers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'suppliers', endpoint: '/suppliers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
-async function syncCustomers(cfg: SyncConfig, errors: string[]) {
+async function syncCustomers(cfg: SyncConfig, errors: string[], fournies?: ApiCustomer[]) {
   const db = getDb()
   const localRows = db.select().from(customers).all()
-  const remoteRows = (await apiGet<ApiCustomer[]>(cfg, '/customers')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiCustomer[]>(cfg, '/customers')) ?? []
 
   const toApiBody = (c: (typeof localRows)[number]): Record<string, unknown> =>
     toSnakeCase({
@@ -453,13 +464,13 @@ async function syncCustomers(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
-async function syncProducts(cfg: SyncConfig, errors: string[]) {
+async function syncProducts(cfg: SyncConfig, errors: string[], fournies?: ApiProduct[]) {
   const db = getDb()
   const localRows = db.select().from(products).all()
-  const remoteRows = (await apiGet<ApiProduct[]>(cfg, '/products')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiProduct[]>(cfg, '/products')) ?? []
 
   const toApiBody = (p: (typeof localRows)[number]): Record<string, unknown> =>
     toSnakeCase({
@@ -488,15 +499,15 @@ async function syncProducts(cfg: SyncConfig, errors: string[]) {
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'products', endpoint: '/products', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors })
+  return syncSimpleEntity({ cfg, name: 'products', endpoint: '/products', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
 // ─── Commandes fournisseur (+ items + tailles) ────────────────────────────────
 
-async function syncPurchaseOrders(cfg: SyncConfig, errors: string[]): Promise<{ pushed: number; pulled: number; remoteOrders: ApiPurchaseOrder[] }> {
+async function syncPurchaseOrders(cfg: SyncConfig, errors: string[], fournies?: ApiPurchaseOrder[]): Promise<{ pushed: number; pulled: number; remoteOrders: ApiPurchaseOrder[] }> {
   const db = getDb()
   const localOrders = db.select().from(purchaseOrders).all()
-  const remoteOrders = (await apiGet<ApiPurchaseOrder[]>(cfg, '/purchase-orders')) ?? []
+  const remoteOrders = fournies ?? (await apiGet<ApiPurchaseOrder[]>(cfg, '/purchase-orders')) ?? []
 
   const allLocalItems = db.select().from(purchaseOrderItems).all()
   const itemsByOrder = groupBy(allLocalItems, (i) => i.orderId)
@@ -570,7 +581,13 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[]): Promise<{ 
           .run()
       }
 
-      const detail = await apiGet<ApiPurchaseOrder>(cfg, `/purchase-orders/${remote.id}`)
+      // Le bundle /sync/pull porte deja les tailles ; l'index() classique non,
+      // d'ou l'aller-retour supplementaire dans ce cas seulement. Le jeton d'un
+      // poste non configure ne peut de toute facon pas appeler show().
+      const porteLesTailles = (remote.items ?? []).some((i) => i.sizeCompositions !== undefined)
+      const detail = porteLesTailles
+        ? remote
+        : await apiGet<ApiPurchaseOrder>(cfg, `/purchase-orders/${remote.id}`)
       for (const item of detail?.items ?? []) {
         for (const size of item.sizeCompositions ?? []) {
           db.insert(cartonSizeCompositions)
@@ -585,6 +602,7 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[]): Promise<{ 
   const result = await syncSimpleEntity({
     cfg, name: 'purchase_orders', endpoint: '/purchase-orders', canUpdate: true, canDelete: true,
     localRows: localOrders, remoteRows: remoteOrders, toApiBody, applyRemoteToLocal, errors,
+    skipPush: fournies !== undefined,
   })
 
   return { ...result, remoteOrders }
@@ -592,7 +610,7 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[]): Promise<{ 
 
 // ─── Paiements fournisseur (pas de endpoint de mise à jour, comme en local) ──
 
-async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder[], errors: string[]): Promise<{ pushed: number; pulled: number }> {
+async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder[], errors: string[], skipPush = false): Promise<{ pushed: number; pulled: number }> {
   const db = getDb()
   const localPayments = db.select().from(orderPayments).all()
   const remotePayments = remoteOrders.flatMap((o) => o.payments ?? [])
@@ -600,7 +618,7 @@ async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder
   const localById = new Map(localPayments.map((p) => [p.id, p]))
 
   let pushed = 0
-  for (const local of localPayments) {
+  for (const local of skipPush ? [] : localPayments) {
     // Suppression locale : contrairement aux autres entités (additive-only), on la
     // propage. Sans ça l'API garderait le paiement, le pull ci-dessous le
     // réinsérerait à la synchro suivante et l'avance supprimée « reviendrait ».
@@ -649,10 +667,10 @@ async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder
 
 // ─── Réceptions (+ items) — create-only côté API ──────────────────────────────
 
-async function syncReceptions(cfg: SyncConfig, errors: string[]) {
+async function syncReceptions(cfg: SyncConfig, errors: string[], fournies?: ApiReception[]) {
   const db = getDb()
   const localReceptions = db.select().from(receptions).all()
-  const remoteRows = (await apiGet<ApiReception[]>(cfg, '/receptions')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiReception[]>(cfg, '/receptions')) ?? []
   const localItems = db.select().from(receptionItems).all()
   const itemsByReception = groupBy(localItems, (i) => i.receptionId)
 
@@ -697,15 +715,16 @@ async function syncReceptions(cfg: SyncConfig, errors: string[]) {
     // en PUT /receptions/{id}. Requiert le endpoint update côté API.
     cfg, name: 'receptions', endpoint: '/receptions', canUpdate: true, canDelete: false,
     localRows: localReceptions, remoteRows, toApiBody, applyRemoteToLocal, errors,
+    skipPush: fournies !== undefined,
   })
 }
 
 // ─── Transferts (+ items) — create-only côté API ─────────────────────────────
 
-async function syncTransfers(cfg: SyncConfig, errors: string[]) {
+async function syncTransfers(cfg: SyncConfig, errors: string[], fournies?: ApiTransfer[]) {
   const db = getDb()
   const localTransfers = db.select().from(transfers).all()
-  const remoteRows = (await apiGet<ApiTransfer[]>(cfg, '/transfers')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiTransfer[]>(cfg, '/transfers')) ?? []
   const localItems = db.select().from(transferItems).all()
   const itemsByTransfer = groupBy(localItems, (i) => i.transferId)
 
@@ -748,6 +767,7 @@ async function syncTransfers(cfg: SyncConfig, errors: string[]) {
   return syncSimpleEntity({
     cfg, name: 'transfers', endpoint: '/transfers', canUpdate: false, canDelete: false,
     localRows: localTransfers, remoteRows, toApiBody, applyRemoteToLocal, errors,
+    skipPush: fournies !== undefined,
   })
 }
 
@@ -868,10 +888,10 @@ function replaySaleCancellation(remote: ApiSale): void {
 
 // ─── Ventes (+ lignes + règlements) ──────────────────────────────────────────
 
-async function syncSales(cfg: SyncConfig, errors: string[]): Promise<{ pushed: number; pulled: number }> {
+async function syncSales(cfg: SyncConfig, errors: string[], fournies?: ApiSale[]): Promise<{ pushed: number; pulled: number }> {
   const db = getDb()
   const localSales = db.select().from(sales).all()
-  const remoteRows = (await apiGet<ApiSale[]>(cfg, '/sales')) ?? []
+  const remoteRows = fournies ?? (await apiGet<ApiSale[]>(cfg, '/sales')) ?? []
 
   const itemsBySale    = groupBy(db.select().from(saleItems).all(),    (i) => i.saleId)
   const paymentsBySale = groupBy(db.select().from(salePayments).all(), (p) => p.saleId)
@@ -942,6 +962,7 @@ async function syncSales(cfg: SyncConfig, errors: string[]): Promise<{ pushed: n
   const result = await syncSimpleEntity({
     cfg, name: 'sales', endpoint: '/sales', canUpdate: true, canDelete: true,
     localRows: localSales, remoteRows, toApiBody, applyRemoteToLocal, errors,
+    skipPush: fournies !== undefined,
   })
 
   // Les règlements ajoutés APRÈS la création de la vente ne partent pas avec le PUT
@@ -950,7 +971,7 @@ async function syncSales(cfg: SyncConfig, errors: string[]): Promise<{ pushed: n
   const remotePaymentIds = new Set(remoteRows.flatMap((r) => (r.payments ?? []).map((p) => p.id)))
   let pushed = result.pushed
 
-  for (const [saleId, payments] of paymentsBySale) {
+  for (const [saleId, payments] of fournies !== undefined ? [] : paymentsBySale) {
     if (!remoteSaleIds.has(saleId)) continue // la vente elle-même vient d'être créée : ses règlements sont déjà partis
     for (const payment of payments) {
       if (payment.deletedAt || remotePaymentIds.has(payment.id)) continue
@@ -967,6 +988,61 @@ async function syncSales(cfg: SyncConfig, errors: string[]): Promise<{ pushed: n
   }
 
   return { pushed, pulled: result.pulled }
+}
+
+// ─── Descente depuis le bundle /sync/pull ─────────────────────────────────────
+//
+// Un poste qui n'a jamais ete configure n'a pas de jeton de lecture sur toute
+// l'API : il ne peut pas tirer chaque entite une par une. Le serveur lui sert
+// alors tout d'un bloc (`GET /sync/pull`), et on rejoue ici EXACTEMENT la meme
+// application locale que la synchro classique — y compris le rejeu des
+// mouvements de stock, sans lequel le poste verrait la vente mais garderait un
+// stock faux.
+
+export interface SyncBundle {
+  warehouses?:     ApiWarehouse[]
+  suppliers?:      ApiSupplier[]
+  customers?:      ApiCustomer[]
+  products?:       ApiProduct[]
+  purchaseOrders?: ApiPurchaseOrder[]
+  receptions?:     ApiReception[]
+  transfers?:      ApiTransfer[]
+  sales?:          ApiSale[]
+}
+
+/** Ordre de descente impose par les cles etrangeres. */
+export const ORDRE_ENTITES: Array<{ cle: keyof SyncBundle; api: string; label: string }> = [
+  { cle: 'warehouses',     api: 'warehouses',      label: 'Entrepôts' },
+  { cle: 'suppliers',      api: 'suppliers',       label: 'Fournisseurs' },
+  { cle: 'customers',      api: 'customers',       label: 'Clients' },
+  { cle: 'products',       api: 'products',        label: 'Produits' },
+  { cle: 'purchaseOrders', api: 'purchase_orders', label: 'Commandes' },
+  { cle: 'receptions',     api: 'receptions',      label: 'Réceptions' },
+  { cle: 'transfers',      api: 'transfers',       label: 'Transferts' },
+  { cle: 'sales',          api: 'sales',           label: 'Ventes' },
+]
+
+/** Applique un bundle (ou un morceau de bundle) sans rien pousser. */
+export async function applyBundle(cfg: SyncConfig, bundle: SyncBundle, errors: string[]): Promise<number> {
+  let pulled = 0
+
+  if (bundle.warehouses) pulled += (await syncWarehouses(cfg, errors, bundle.warehouses)).pulled
+  if (bundle.suppliers)  pulled += (await syncSuppliers(cfg, errors, bundle.suppliers)).pulled
+  if (bundle.customers)  pulled += (await syncCustomers(cfg, errors, bundle.customers)).pulled
+  if (bundle.products)   pulled += (await syncProducts(cfg, errors, bundle.products)).pulled
+
+  if (bundle.purchaseOrders) {
+    const orders = await syncPurchaseOrders(cfg, errors, bundle.purchaseOrders)
+    pulled += orders.pulled
+    // Les reglements voyagent avec leur commande dans le bundle.
+    pulled += (await syncOrderPayments(cfg, bundle.purchaseOrders, errors, true)).pulled
+  }
+
+  if (bundle.receptions) pulled += (await syncReceptions(cfg, errors, bundle.receptions)).pulled
+  if (bundle.transfers)  pulled += (await syncTransfers(cfg, errors, bundle.transfers)).pulled
+  if (bundle.sales)      pulled += (await syncSales(cfg, errors, bundle.sales)).pulled
+
+  return pulled
 }
 
 // ─── Orchestration ─────────────────────────────────────────────────────────────
@@ -1042,7 +1118,10 @@ export interface SyncStatus {
 }
 
 export async function getStatus(): Promise<SyncStatus> {
-  const cfg = readConfig()
+  // effectiveConfig() et pas readConfig() : sans configuration saisie, le jeton
+  // embarque suffit. Repondre « non configure » afficherait un nuage barre alors
+  // que la synchronisation tourne bel et bien.
+  const cfg = effectiveConfig()
   const lastSyncedAt = getLastSyncedAt()
   if (!cfg) return { online: false, configured: false, lastSyncedAt, pending: 0 }
   const online = await checkConnectivity(cfg.apiUrl)

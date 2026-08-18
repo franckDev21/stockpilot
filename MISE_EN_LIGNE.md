@@ -416,6 +416,83 @@ Ne pas supprimer les fichiers à la main : la table garderait des lignes orpheli
 
 ---
 
+### S17 — Le poste redemande un email et un mot de passe
+
+**Symptôme.** La fenêtre d'envoi affiche des champs « Email » / « Mot de passe » alors
+qu'elle ne devrait demander qu'une confirmation.
+
+**Cause, par ordre de probabilité.**
+
+1. **Le poste tourne encore sur une ancienne version.** C'est le cas courant : l'envoi
+   sans mot de passe date de la 1.6.0, la synchronisation complète de la 1.7.0, et
+   `electron-updater` n'applique la mise à jour **qu'au redémarrage de l'application**.
+2. Le jeton embarqué a été révoqué côté serveur — la modale bascule alors volontairement
+   sur la saisie manuelle, pour ne pas laisser l'utilisateur sans recours.
+3. Le build a été produit sans le secret `STOCKPILOT_UPLOAD_TOKEN` (impossible depuis
+   `ba504cb` : le workflow refuse de publier sans lui).
+
+**Diagnostic.** Version affichée par l'application (bandeau « À propos » / titre de la
+fenêtre) ; puis, côté serveur :
+
+```bash
+docker compose exec postgres psql -U stockpilot -d stockpilot \
+  -c "select id, name, abilities from personal_access_tokens where name = 'poste-upload';"
+```
+
+Le jeton doit exister et porter `backups:upload`, `sync:push` **et** `sync:pull`.
+
+**Résolution.** Fermer et rouvrir l'application (la mise à jour s'installe), sinon
+réinstaller le `.exe` de la dernière release. Si le jeton manque une ability, la remettre
+par un `update` sur cette ligne : c'est instantané, aucune reconstruction nécessaire.
+
+---
+
+### S18 — L'envoi affiche « lignes refusées »
+
+**Symptôme.** Le résumé de l'envoi est jaune : « Envoyées, avec des lignes refusées ».
+
+**Cause.** Deux motifs, et deux seulement :
+
+- *« référence déjà utilisée sur le serveur par une autre ligne »* — les deux postes ont
+  créé chacun de leur côté une fiche portant la même référence (« CMD-003 », « REF-001 »)
+  avec des identifiants différents. **C'est le seul conflit que la machine ne peut pas
+  trancher** : les deux lignes sont peut-être la même chose, peut-être pas.
+- *« dépend d'une ligne absente du serveur »* — une vente dont le produit a lui-même été
+  refusé, en cascade. Elle repartira toute seule une fois le conflit de référence réglé.
+
+**Diagnostic.** Les identifiants refusés sont affichés dans la fenêtre. Côté serveur :
+
+```bash
+docker compose exec postgres psql -U stockpilot -d stockpilot \
+  -c "select id, reference from products where reference = 'REF-001';"
+```
+
+**Résolution.** Renommer la référence en double sur **un** des deux postes (c'est une
+décision commerciale, pas technique), puis recliquer sur « Envoyer au serveur ». Rien
+n'est perdu entre-temps : le reste du lot est déjà passé, et l'envoi est rejouable autant
+de fois qu'on veut.
+
+---
+
+### S19 — La synchronisation automatique semble ne rien envoyer
+
+**Symptôme.** L'indicateur dit « Synchronisé », mais on n'a pas l'impression que les
+dernières saisies sont parties.
+
+**Cause attendue, pas un défaut.** Depuis la 1.7.0, la synchro automatique est
+**incrémentale** : elle n'envoie que ce dont le `updated_at` est postérieur à la dernière
+synchro réussie. C'est ce qui évite de réexpédier toute la base — photos produit comprises
+— toutes les 3 minutes.
+
+**Diagnostic.** Cliquer sur « Envoyer au serveur » : ce bouton envoie **tout**, sans tenir
+compte de la dernière synchro. Si le résumé affiche « déjà à jour » partout, c'est que le
+serveur avait bien reçu.
+
+**À savoir.** L'horodatage de dernière synchro n'avance que si l'envoi **et** la
+récupération ont réussi : un échec ne peut donc pas faire sauter définitivement une ligne.
+
+---
+
 ## 3. Retour en arrière
 
 | Ce qu'on veut annuler | Comment |

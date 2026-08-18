@@ -7,6 +7,7 @@ import { useDarkMode }           from '@/hooks/useDarkMode'
 import { formatDate }            from '@/lib/utils'
 import { SyncStatus }            from './SyncStatus'
 import { SendDatabaseModal }     from './SendDatabaseModal'
+import { SendDataModal }         from './SendDataModal'
 
 interface LowStockItem { productId: string; productName: string; reference: string; totalPairs: number; threshold: number }
 
@@ -52,6 +53,7 @@ export function Header() {
   }
 
   const [showSend, setShowSend] = useState(false)
+  const [showSendData, setShowSendData] = useState(false)
 
   const handleBackup = async () => {
     setBacking(true)
@@ -174,10 +176,11 @@ export function Header() {
             Restaurer
           </button>
 
-          {/* Envoi de la base vers le serveur (réunion des données de plusieurs postes) */}
+          {/* Envoi des données de ce poste vers le serveur (réunion de plusieurs postes).
+              L'envoi du FICHIER de base reste accessible depuis la même fenêtre. */}
           <button
-            onClick={() => setShowSend(true)}
-            title="Envoyer la base de ce poste au serveur"
+            onClick={() => setShowSendData(true)}
+            title="Envoyer les données de ce poste au serveur"
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg
                        bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300
                        border border-slate-200 dark:border-slate-600
@@ -279,6 +282,12 @@ export function Header() {
             ))}
           </ul>
         </div>
+      )}
+      {showSendData && (
+        <SendDataModal
+          onClose={() => setShowSendData(false)}
+          onSendFile={() => { setShowSendData(false); setShowSend(true) }}
+        />
       )}
       {showSend && <SendDatabaseModal onClose={() => setShowSend(false)} />}
     </>

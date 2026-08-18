@@ -5,7 +5,95 @@ faut savoir pour continuer est ici.
 
 ---
 
-## 📌 POINT DE REPRISE — 18/08/2026
+## 📌 POINT DE REPRISE — 18/08/2026 (soir) — LIRE EN PREMIER
+
+### En une phrase
+
+Les deux postes se synchronisent désormais **tout seuls**, dans les deux sens, **sans
+qu'on ait à saisir quoi que ce soit** : l'application embarque un jeton dédié et parle à
+deux points d'entrée en bloc, `POST /sync/push` et `GET /sync/pull`.
+
+### Ce que Franck a demandé (18/08 au soir)
+
+> « Les versions ne se synchronisent pas ! Je veux un bouton qui permet de soumettre la
+> version la plus à jour sur le serveur, en deux clics maxi, sans mot de passe. […] Sur
+> l'ordinateur B, je clique sur un bouton synchroniser et ça met ce poste à jour comme
+> l'ordinateur A. Et je voudrais que la synchronisation des deux appareils se fasse
+> automatiquement. »
+
+Le bouton « Envoyer au serveur » de la 1.5.0 **réclamait des identifiants** — d'où
+l'agacement. La 1.6.0 avait déjà réglé ce point (jeton embarqué, secret GitHub posé à
+13:50, build du tag à 13:53), mais elle n'envoyait que le **fichier** de base, pour une
+fusion manuelle de ma part. Ce n'était pas ce qu'il voulait : il veut que les données
+circulent, pas des fichiers.
+
+### Ce qui a été livré
+
+**API** (commit `468db4b`, CI + déploiement verts, routes vivantes en prod) :
+
+| Point d'entrée | Rôle | Ability |
+|---|---|---|
+| `POST /api/v1/sync/push` | le poste dépose tout ce qu'il a | `sync:push` |
+| `GET /api/v1/sync/pull?entity=…` | ce que le serveur a, tombstones compris | `sync:pull` |
+
+- clé = l'UUID du poste ; **dernière écriture gagne** ; **les horodatages du poste sont
+  conservés** — les remplacer par `now()` ferait croire au poste que le serveur est plus
+  récent que lui, et il re-tirerait ses propres données au pull suivant ;
+- **une transaction par ligne** : une référence en double n'emporte pas les milliers
+  d'autres, elle est *signalée au poste* (« référence déjà utilisée… ») ;
+- **les mouvements de stock ne sont jamais transportés** : le serveur les rejoue à partir
+  de la réception / du transfert / de la vente, et seulement si cette référence n'en a pas
+  déjà. Sans ce garde-fou, renvoyer deux fois le même lot **doublait le stock** ;
+- abilities volontairement **étroites** : le dépôt desktop est public (condition de
+  l'auto-update), donc le jeton voyage dans un binaire téléchargeable. Un jeton d'envoi ne
+  peut rien lire, un jeton de lecture ne peut rien écrire, et **ni l'un ni l'autre
+  n'atteint les bases déposées par les autres postes**.
+
+**Desktop** (version **1.7.0**) :
+
+- bouton « Envoyer au serveur » → modale « Envoyer mes données au serveur » : un écran de
+  confirmation, une barre de progression, puis le détail *ajoutées / à jour / déjà à jour*
+  par entité et la liste des lignes refusées. L'envoi du **fichier** de base reste
+  accessible depuis la même fenêtre (« Envoyer plutôt le fichier de base ») ;
+- « Synchroniser maintenant » (indicateur du bandeau) et la **synchro automatique toutes
+  les 3 minutes** passent par ces mêmes points d'entrée quand le poste n'a pas de
+  configuration : plus rien à saisir, et l'indicateur n'affiche plus « Non configuré » ;
+- la synchro automatique est **incrémentale** (`updated_at > dernière synchro`) : sans ça
+  elle réexpédierait toute la base, photos produit comprises, toutes les 3 minutes. Une
+  commande ou une vente repart dès qu'**une de ses lignes** a bougé — un règlement ajouté
+  après coup ne touche pas toujours l'en-tête. Le bouton, lui, envoie **tout** ;
+- l'horodatage de dernière synchro n'avance **que si tout est passé**, sinon la synchro
+  incrémentale suivante sauterait ce qui vient d'échouer.
+
+### Niveau de vérification
+
+| Ce qui est prouvé | Comment |
+|---|---|
+| L'API fait ce qu'elle annonce | **22 tests, 73 assertions** (dont les 9 préexistants) |
+| Le **vrai code client** tourne | **banc deux postes headless, 27 assertions vertes** : 2 vraies bases SQLite ↔ une vraie API Laravel |
+| Le stock ne double pas | re-synchro complète du poste B : stock identique (54 paires) |
+| Une vente saisie sur B arrive sur A | et le stock de A suit (54 → 52) |
+| Une suppression circule | B voit la vente supprimée sur A |
+| L'incrémental n'oublie rien | un règlement tardif fait repartir sa vente, et rien d'autre |
+| Les abilities tiennent **en production** | `sync:pull` → 200 sur le bundle, **403** sur `/products` et sur `/backups` |
+| ❌ L'UI n'a jamais été cliquée | pas d'Electron sur ce serveur — limitation permanente |
+
+### À faire à la reprise
+
+1. **Installer la 1.7.0 sur les deux postes.** ⚠️ Un poste qui redemande un mot de passe
+   est un poste **resté sur une ancienne version** : la mise à jour ne s'applique qu'au
+   redémarrage de l'application.
+2. Sur le poste à jour (A) : « Envoyer au serveur » → « Confirmer l'envoi ».
+3. Sur le poste en retard (B) : cliquer sur l'indicateur de synchro → « Synchroniser
+   maintenant ». Ensuite, plus rien à faire : les deux postes se recalent seuls.
+4. Vérifier côté serveur : `docker compose exec postgres psql -U stockpilot -d stockpilot
+   -c "select count(*) from sales;"` — 0 avant, non nul après.
+5. Si des lignes sont **refusées** pour « référence déjà utilisée » : c'est le cas que la
+   machine ne peut pas trancher (les deux postes ont créé « CMD-003 » chacun de leur
+   côté). Utiliser `/home/admin/stockpilot-fusion/fusion.mjs inspect` sur les deux bases
+   pour décider qui garde quelle référence.
+
+## POINT DE REPRISE PRÉCÉDENT — 18/08/2026 (matin)
 
 ### Où on en est en une phrase
 

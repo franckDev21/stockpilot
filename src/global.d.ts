@@ -54,6 +54,25 @@ interface SyncSummary {
   errors:     string[]
   reason?:    'not_configured' | 'offline' | 'already_running'
 }
+/** Résultat de « Envoyer mes données au serveur » (voir data-push.service.ts). */
+interface PushCounts { created: number; updated: number; unchanged: number }
+interface PushSummary {
+  success:       boolean
+  message?:      string
+  sent:          Record<string, number>
+  counts:        Record<string, PushCounts>
+  rejectedCount: number
+  rejected:      Array<{ entity: string; id: string; reason: string }>
+  requests:      number
+  durationMs:    number
+}
+interface PullSummary {
+  success:    boolean
+  message?:   string
+  pulled:     number
+  errors:     string[]
+  durationMs: number
+}
 interface SyncStatus {
   online:       boolean
   configured:   boolean
@@ -181,6 +200,10 @@ declare interface Window {
       getConfig:      () => Promise<{ apiUrl: string; email: string; configured: boolean } | null>
       getDevDefaults: () => Promise<{ apiUrl: string; email: string; password: string }>
       logout:         () => Promise<{ success: boolean }>
+      pushInfo:       () => Promise<{ posteLabel: string; apiUrl: string; sansIdentifiants: boolean; appVersion: string }>
+      pushAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) => Promise<PushSummary>
+      pullAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) => Promise<PullSummary>
+      onPushProgress: (cb: (p: { entity: string; done: number; total: number }) => void) => (() => void)
     }
   }
 }

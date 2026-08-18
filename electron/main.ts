@@ -18,7 +18,7 @@ import { registerBackupHandlers }        from './handlers/backup.handler'
 import { registerPrintHandlers }         from './handlers/print.handler'
 import { registerAuthHandlers }          from './handlers/auth.handler'
 import { registerSyncHandlers }          from './handlers/sync.handler'
-import { runSync }                       from './services/sync.service'
+import { syncMaintenant }                 from './services/poste-sync.service'
 import { setupAutoUpdate }                from './updater'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -61,7 +61,7 @@ const SYNC_INTERVAL_MS = 3 * 60 * 1000
 
 function startPeriodicSync(): void {
   setInterval(() => {
-    runSync().catch(() => { /* runSync() ne rejette jamais, filet de sécurité */ })
+    syncMaintenant().catch(() => { /* ne rejette jamais, filet de sécurité */ })
   }, SYNC_INTERVAL_MS)
 }
 
@@ -108,5 +108,5 @@ app.whenReady().then(() => {
   createWindow()
   startPeriodicSync()
   // Première tentative de synchro peu après le démarrage (best-effort, silencieux)
-  runSync().catch(() => {})
+  syncMaintenant().catch(() => {})
 })

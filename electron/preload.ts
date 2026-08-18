@@ -136,6 +136,17 @@ const api = {
     getConfig:      () => invoke('sync:getConfig'),
     getDevDefaults: () => invoke('sync:getDevDefaults'),
     logout:         () => invoke('sync:logout'),
+    pushInfo:       () => invoke('sync:pushInfo'),
+    pushAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) =>
+      invoke('sync:pushAll', data),
+    pullAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) =>
+      invoke('sync:pullAll', data),
+    // Progression de l'envoi ; renvoie une fonction de désabonnement.
+    onPushProgress: (cb: (p: { entity: string; done: number; total: number }) => void): (() => void) => {
+      const listener = (_e: unknown, payload: { entity: string; done: number; total: number }) => cb(payload)
+      ipcRenderer.on('sync:pushProgress', listener)
+      return () => ipcRenderer.removeListener('sync:pushProgress', listener)
+    },
   },
 
   update: {

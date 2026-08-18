@@ -26,6 +26,10 @@ export function SyncStatus() {
   const [syncing, setSyncing] = useState(false)
   const [lastSummary, setLastSummary] = useState<SyncSummary | null>(null)
   const [showConfig, setShowConfig] = useState(false)
+  // null = ce poste n'a jamais été connecté : il se synchronise avec le jeton
+  // embarqué dans l'application, sans identifiants. Il faut le dire, sinon on
+  // croit qu'il reste quelque chose à configurer.
+  const [compte, setCompte] = useState<{ email: string } | null>(null)
 
   const refreshStatus = useCallback(() => {
     window.api.sync.getStatus().then(setStatus).catch(() => {})
@@ -36,6 +40,10 @@ export function SyncStatus() {
     const id = setInterval(refreshStatus, 20000)
     return () => clearInterval(id)
   }, [refreshStatus])
+
+  useEffect(() => {
+    window.api.sync.getConfig().then((cfg) => setCompte(cfg ? { email: cfg.email } : null)).catch(() => {})
+  }, [open])
 
   const handleSyncNow = async () => {
     if (syncing) return
@@ -101,6 +109,11 @@ export function SyncStatus() {
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   État réseau : <span className="font-semibold text-slate-700 dark:text-slate-300">{status.online ? 'en ligne' : 'hors ligne'}</span>
                 </p>
+                {compte === null && (
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    Ce poste se synchronise automatiquement avec le serveur, sans identifiants.
+                  </p>
+                )}
                 {lastSummary && (
                   <div className="text-xs rounded-lg bg-slate-50 dark:bg-slate-700/50 p-2.5 space-y-1">
                     <p className="text-slate-600 dark:text-slate-300">
