@@ -23,3 +23,8 @@ jobs:
       - run: npm run release:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Jeton du bouton « Envoyer au serveur ». Il ne peut pas vivre dans le
+          # depot, qui est public — condition de l'auto-update. Sans ce secret,
+          # l'app construite redemande des identifiants au lieu d'envoyer en
+          # deux clics : le bouton fonctionne toujours, mais moins vite.
+          STOCKPILOT_UPLOAD_TOKEN: ${{ secrets.STOCKPILOT_UPLOAD_TOKEN }}

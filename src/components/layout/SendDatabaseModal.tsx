@@ -1,16 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2, Server, X, CheckCircle2, AlertTriangle } from 'lucide-react'
 
 /**
  * Envoi de la base du poste vers le serveur.
  *
- * Sert à réunir les données de plusieurs postes sans transfert manuel. Le nom du
- * poste est ce qui permettra de les distinguer côté serveur.
+ * Sert à réunir les données de plusieurs postes sans transfert manuel.
  *
- * Les identifiants ne sont demandés que si la synchronisation n'est pas déjà
- * configurée, et dans ce cas ils ne sont PAS enregistrés : ils servent à obtenir
- * un jeton pour cet envoi seulement. Envoyer sa base ne déclenche donc jamais la
- * synchronisation périodique.
+ * Deux clics et rien à saisir : l'app embarque un jeton dont l'unique pouvoir
+ * est de déposer une base, et le nom du poste vient de la machine. La saisie
+ * d'identifiants n'apparaît qu'en dernier recours — build sans jeton, ou jeton
+ * révoqué côté serveur — pour que le bouton reste utilisable dans tous les cas.
+ *
+ * Envoyer sa base ne déclenche jamais la synchronisation périodique : rien
+ * n'est enregistré sur ce poste.
  */
 export function SendDatabaseModal({ onClose }: { onClose: () => void }) {
   const [posteLabel, setPosteLabel] = useState('')
@@ -18,9 +20,29 @@ export function SendDatabaseModal({ onClose }: { onClose: () => void }) {
   const [email, setEmail]           = useState('')
   const [password, setPassword]     = useState('')
   const [besoinIdentifiants, setBesoinIdentifiants] = useState(false)
+  const [chargement, setChargement] = useState(true)
   const [envoi, setEnvoi]           = useState(false)
   const [erreur, setErreur]         = useState<string | null>(null)
   const [succes, setSucces]         = useState<{ sizeBytes?: number } | null>(null)
+
+  // Nom du poste et destination sont connus de l'app : on les affiche pour que
+  // l'utilisateur confirme en connaissance de cause, sans avoir à les taper.
+  useEffect(() => {
+    let vivant = true
+    window.api.backup
+      .uploadInfo()
+      .then((infos) => {
+        if (!vivant) return
+        setPosteLabel(infos.posteLabel)
+        setApiUrl(infos.apiUrl)
+        setBesoinIdentifiants(!infos.sansIdentifiants)
+      })
+      .catch(() => undefined)
+      .finally(() => vivant && setChargement(false))
+    return () => {
+      vivant = false
+    }
+  }, [])
 
   const envoyer = async () => {
     setEnvoi(true)
@@ -36,10 +58,13 @@ export function SendDatabaseModal({ onClose }: { onClose: () => void }) {
         return
       }
 
-      // Première tentative sans identifiants : le poste n'a pas encore de jeton.
-      if (!besoinIdentifiants && /connexion à l’API|Aucune connexion/i.test(res.message ?? '')) {
+      // Le jeton embarqué peut avoir été révoqué : on bascule alors sur la
+      // saisie manuelle plutôt que de laisser l'utilisateur sans recours.
+      if (!besoinIdentifiants) {
         setBesoinIdentifiants(true)
-        setErreur('Ce poste n’est pas encore connecté au serveur : renseignez vos identifiants.')
+        setErreur(
+          `${res.message ?? 'Échec de l’envoi.'} Vous pouvez réessayer avec vos identifiants.`,
+        )
         return
       }
       setErreur(res.message ?? 'Échec de l’envoi.')
@@ -79,25 +104,33 @@ export function SendDatabaseModal({ onClose }: { onClose: () => void }) {
                 </p>
               </div>
             </div>
+          ) : chargement ? (
+            <div className="flex items-center gap-2 py-2 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Préparation…
+            </div>
           ) : (
             <>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Une copie complète de la base de ce poste est envoyée au serveur. Rien n’est
-                modifié sur ce poste, et la synchronisation n’est pas activée.
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Une copie complète de la base de ce poste va être envoyée au serveur.
               </p>
 
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">
-                  Nom de ce poste
-                </span>
-                <input
-                  value={posteLabel}
-                  onChange={(e) => setPosteLabel(e.target.value)}
-                  placeholder="ex. bureau, portable"
-                  className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700
-                             px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                />
-              </label>
+              <div className="rounded-lg bg-slate-50 dark:bg-slate-700/50 p-3 text-xs">
+                <div className="flex justify-between gap-3 py-0.5">
+                  <span className="text-slate-500 dark:text-slate-400">Ce poste</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">{posteLabel}</span>
+                </div>
+                <div className="flex justify-between gap-3 py-0.5">
+                  <span className="text-slate-500 dark:text-slate-400">Destination</span>
+                  <span className="truncate font-semibold text-slate-700 dark:text-slate-200">
+                    {apiUrl.replace(/^https?:\/\//, '')}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Rien n’est modifié sur ce poste, et la synchronisation n’est pas activée.
+              </p>
 
               {besoinIdentifiants && (
                 <div className="space-y-2 rounded-lg bg-slate-50 dark:bg-slate-700/50 p-3">
@@ -152,12 +185,12 @@ export function SendDatabaseModal({ onClose }: { onClose: () => void }) {
           {!succes && (
             <button
               onClick={envoyer}
-              disabled={envoi || champsManquants}
+              disabled={envoi || chargement || champsManquants}
               className="flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold
                          text-white hover:bg-primary-700 disabled:opacity-60"
             >
               {envoi ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Server className="h-3.5 w-3.5" />}
-              {envoi ? 'Envoi…' : 'Envoyer'}
+              {envoi ? 'Envoi…' : 'Confirmer l’envoi'}
             </button>
           )}
         </div>

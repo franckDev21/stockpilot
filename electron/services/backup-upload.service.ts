@@ -1,8 +1,15 @@
 import { app } from 'electron'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { getSqlite } from '../db/index'
-import { readConfig } from './sync-config.service'
+import { getDefaultApiUrl, readConfig, readDotEnv } from './sync-config.service'
+
+// Jeton d'envoi injecte a la compilation (voir vite.config.ts et le workflow de
+// release). Il n'est PAS dans le depot : celui-ci est public, condition de
+// l'auto-update. Sans lui — build local sans le secret — on retombe sur la
+// demande d'identifiants.
+declare const __UPLOAD_TOKEN__: string | undefined
 
 // ─── Envoi de la base du poste vers le serveur ───────────────────────────────
 // Sert à réunir sur le serveur les données de plusieurs postes sans transfert
@@ -13,6 +20,11 @@ import { readConfig } from './sync-config.service'
 // de synchro écrit `sync-config.json` et déclenche la synchro périodique — ce
 // qu'on ne veut pas forcément avant d'avoir fusionné. Ici, si aucune config
 // n'existe, on obtient un jeton pour cet envoi seulement, sans rien persister.
+//
+// L'app embarque un jeton dédié, dont l'unique pouvoir côté serveur est de
+// déposer une base (ability `backups:upload`) : il ne peut ni écrire ailleurs,
+// ni lire, ni supprimer les bases déjà déposées. C'est ce qui permet d'envoyer
+// en deux clics, sans mot de passe à saisir.
 
 export interface UploadResult {
   success:    boolean
@@ -43,26 +55,60 @@ async function tokenSansPersistance(
   return { token: json.token }
 }
 
+/** Le jeton d'envoi embarqué, ou '' si ce build n'en contient pas. */
+function jetonEmbarque(): string {
+  const compile = typeof __UPLOAD_TOKEN__ === 'string' ? __UPLOAD_TOKEN__ : ''
+  if (compile) return compile
+  // En dev, un .env permet de tester sans reconstruire.
+  const env = readDotEnv()
+  return env.UPLOAD_TOKEN || env.VITE_UPLOAD_TOKEN || ''
+}
+
+/**
+ * Nom par défaut du poste : celui de la machine.
+ *
+ * C'est ce qui distingue les bases côté serveur ; le demander à l'utilisateur
+ * ajoutait une saisie sans rien apporter, la machine connaissant déjà son nom.
+ */
+export function nomPosteParDefaut(): string {
+  return (os.hostname() || 'poste').trim().slice(0, 100)
+}
+
+/** Ce que l'interface doit savoir avant de proposer l'envoi. */
+export function infosEnvoi(): { posteLabel: string; apiUrl: string; sansIdentifiants: boolean } {
+  const cfg = readConfig()
+  return {
+    posteLabel:       nomPosteParDefaut(),
+    apiUrl:           cfg?.apiUrl ?? getDefaultApiUrl(),
+    sansIdentifiants: Boolean(cfg?.token) || Boolean(jetonEmbarque()),
+  }
+}
+
 export async function uploadDatabase(opts: {
-  posteLabel:   string
+  posteLabel?:  string
   credentials?: { apiUrl: string; email: string; password: string }
 }): Promise<UploadResult> {
-  const label = opts.posteLabel.trim()
-  if (!label) return { success: false, message: 'Indiquez un nom de poste (ex. « bureau »).' }
+  const label = (opts.posteLabel ?? '').trim() || nomPosteParDefaut()
 
-  // 1) De quoi s'authentifier : config de synchro existante, sinon identifiants fournis.
+  // 1) De quoi s'authentifier. Des identifiants saisis passent DEVANT le reste :
+  //    c'est la porte de secours si le jeton embarqué venait à être révoqué,
+  //    sinon un jeton mort rendrait le bouton inutilisable sans recours.
   const cfg = readConfig()
+  const embarque = jetonEmbarque()
   let apiUrl: string
   let token: string
 
-  if (cfg) {
-    apiUrl = cfg.apiUrl
-    token  = cfg.token
-  } else if (opts.credentials) {
+  if (opts.credentials) {
     apiUrl = opts.credentials.apiUrl.trim().replace(/\/$/, '')
     const r = await tokenSansPersistance(apiUrl, opts.credentials.email.trim(), opts.credentials.password)
     if ('erreur' in r) return { success: false, message: r.erreur }
     token = r.token
+  } else if (cfg) {
+    apiUrl = cfg.apiUrl
+    token  = cfg.token
+  } else if (embarque) {
+    apiUrl = getDefaultApiUrl()
+    token  = embarque
   } else {
     return { success: false, message: 'Aucune connexion à l’API : renseignez URL, email et mot de passe.' }
   }

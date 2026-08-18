@@ -24,7 +24,7 @@ function configFile(): string {
 
 let cachedEnvFile: Record<string, string> | null = null
 
-function readDotEnv(): Record<string, string> {
+export function readDotEnv(): Record<string, string> {
   if (cachedEnvFile) return cachedEnvFile
   const map: Record<string, string> = {}
   try {

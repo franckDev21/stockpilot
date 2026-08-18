@@ -5,7 +5,80 @@ faut savoir pour continuer est ici.
 
 ---
 
-## 📌 POINT DE REPRISE — 17/08/2026, fin de session
+## 📌 POINT DE REPRISE — 18/08/2026
+
+### Où on en est en une phrase
+
+Le bouton « Envoyer au serveur » **envoie désormais en deux clics, sans mot de passe** :
+l'app embarque un jeton dédié. Le blocage constaté ce matin — quatre `POST /auth/login`
+en **401** depuis un poste — est levé à la racine, puisqu'il n'y a plus d'identifiants à
+saisir. Publié en **v1.6.0**.
+
+### Ce qui s'est passé le 18/08 au matin (diagnostic, pas supposition)
+
+Le journal nginx public montre **4 tentatives de connexion à 15:36–15:38 depuis
+`143.105.152.254`** (la même machine Windows qui utilise admin.feujio.com), User-Agent
+`node` — donc bien l'app de bureau, pas un navigateur. **401 les quatre fois.**
+
+Cause : `AuthController::login` ne renvoie 401 que dans un seul cas, **email inconnu ou
+mot de passe faux** (un email mal formé donnerait 422). Or il n'existait qu'**un seul
+compte** sur le serveur, `feujiodoungue@gmail.com`, dont le mot de passe date du 21/07.
+
+⚠️ Ce que ces 401 prouvent au passage, et c'est une bonne nouvelle : la modale s'ouvre,
+la requête part et atteint le serveur. `uploadDatabase()` **s'exécute** — l'angle mort
+runtime du 17/08 portait donc bien sur l'authentification, pas sur le reste.
+
+### Ce qui a été livré le 18/08
+
+**API** (commit `7cce5ff`, CI + déploiement verts) : `EnforceTokenAbilities` accepte une
+ability **étroite**, `backups:upload`, valable pour le seul `POST /api/v1/backups`.
+
+Pourquoi pas simplement l'ability `write` : le jeton voyage **dans l'exécutable
+distribué**, et le dépôt desktop est public. Un jeton `write` diffuserait un droit
+d'écriture sur toute l'API. Un jeton `backups:upload` est refusé partout ailleurs, **y
+compris pour lister, télécharger ou supprimer les bases déjà déposées** — qui contiennent
+les données des autres postes.
+
+**Compte dédié** créé en production : `postes@stockpilot.feujio.com` (user `id=3`),
+porteur du seul jeton `poste-upload` / `['backups:upload']`, sans expiration. Le compte
+admin `feujiodoungue@gmail.com` n'a **pas** été touché.
+
+**Desktop** : jeton injecté **au build** via le secret GitHub `STOCKPILOT_UPLOAD_TOKEN`
+(jamais dans le dépôt, qui est public). Ordre d'authentification :
+identifiants saisis > configuration de synchro > jeton embarqué. Les identifiants passent
+**devant** exprès : c'est la porte de secours si le jeton était révoqué. Le nom du poste
+vient de `os.hostname()`, la modale n'est plus qu'un écran de confirmation.
+
+### Niveau de vérification
+
+| Ce qui est prouvé | Comment |
+|---|---|
+| Le jeton dépose une base | **201** contre la production publique |
+| Il ne peut pas lister les bases | **403** `lacks the 'read' ability` |
+| Il ne peut pas écrire ailleurs | **403** sur `POST /warehouses` |
+| Les abilities tiennent en test | **9 tests, 22 assertions, 0 échec** |
+| Le jeton atterrit dans le bundle | sentinelle retrouvée dans `dist-electron/main.js` |
+| `uploadDatabase()` **s'exécute** | banc headless : `{"success":true}` — **première exécution réelle** |
+| La base reçue est complète | 500 lignes, somme 12 525 000, `integrity_check` **ok** |
+| Le WAL est bien capturé | la base de test avait son WAL non basculé |
+
+❌ Toujours pas exercé : **l'UI réelle** (pas d'Electron sur ce serveur). Le banc appelle
+`uploadDatabase()` directement, il ne clique pas sur le bouton.
+
+### À faire à la reprise
+
+1. **Franck installe la 1.6.0** (auto-update) et clique « Envoyer au serveur » sur les
+   **deux** postes. Plus rien à saisir : ouvrir, confirmer.
+2. Vérifier l'arrivée : `ls /home/admin/stockpilot-api/storage/app/private/backups/`.
+3. `fusion.mjs inspect` sur les deux bases, puis fusion **ou** simple activation de la
+   synchro s'il n'y a aucune collision de référence.
+
+⚠️ Toujours valable : **ne pas activer la synchro sur les deux postes avant d'avoir
+tranché les collisions.**
+
+---
+
+## POINT DE REPRISE PRÉCÉDENT — 17/08/2026, fin de session
 
 ### Où on en est en une phrase
 

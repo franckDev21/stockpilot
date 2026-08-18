@@ -13,6 +13,15 @@ export default defineConfig({
     electron({
       main: {
         entry: 'electron/main.ts',
+        vite: {
+          define: {
+            // Jeton du bouton « Envoyer au serveur ». Fourni par un secret au
+            // moment du build : le depot est public (l'auto-update l'exige),
+            // il ne peut donc pas y figurer. Absent en build local, et l'app
+            // redemande alors des identifiants.
+            __UPLOAD_TOKEN__: JSON.stringify(process.env.STOCKPILOT_UPLOAD_TOKEN ?? ''),
+          },
+        },
         onstart() {
           const env = { ...process.env }
           delete env.ELECTRON_RUN_AS_NODE
