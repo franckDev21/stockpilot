@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { getDb } from '../db/index'
 import {
@@ -467,6 +467,13 @@ async function syncCustomers(cfg: SyncConfig, errors: string[], fournies?: ApiCu
   return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
+/** Une référence n'est prise que par un produit encore actif (index partiel). */
+function estReferencePrise(reference: string): boolean {
+  return getDb().select({ id: products.id }).from(products)
+    .where(and(eq(products.reference, reference), isNull(products.deletedAt)))
+    .get() !== undefined
+}
+
 async function syncProducts(cfg: SyncConfig, errors: string[], fournies?: ApiProduct[]) {
   const db = getDb()
   const localRows = db.select().from(products).all()
@@ -480,6 +487,40 @@ async function syncProducts(cfg: SyncConfig, errors: string[], fournies?: ApiPro
     }) as Record<string, unknown>
 
   const applyRemoteToLocal = async (r: ApiProduct): Promise<void> => {
+    // Les références produit sont SAISIES À LA MAIN, poste par poste : les deux
+    // postes peuvent très bien avoir donné « A237-17 » à deux produits
+    // différents. L'index unique faisait alors échouer l'écriture, l'erreur
+    // était rangée dans `errors` — que personne ne lisait — et le produit de
+    // l'autre poste n'arrivait JAMAIS. C'est la piste du produit « lv » resté
+    // invisible sur le poste B le 19/08.
+    //
+    // On tranche plutôt que de laisser les deux postes diverger en silence : le
+    // produit distant garde sa référence, celui d'ici qui la squattait est
+    // renommé (il repartira au serveur avec sa nouvelle référence) et le
+    // renommage est signalé pour que quelqu'un tranche pour de bon.
+    if (!r.deletedAt) {
+      const squatteur = db.select().from(products)
+        .where(and(eq(products.reference, r.reference), isNull(products.deletedAt)))
+        .all()
+        .find((p) => p.id !== r.id)
+
+      if (squatteur) {
+        let libre = `${r.reference}-2`
+        for (let n = 2; estReferencePrise(libre); n++) libre = `${r.reference}-${n + 1}`
+
+        db.update(products)
+          .set({ reference: libre, updatedAt: new Date().toISOString() })
+          .where(eq(products.id, squatteur.id))
+          .run()
+
+        errors.push(
+          `products : la référence « ${r.reference} » désignait deux produits différents — ` +
+          `« ${squatteur.name} » (créé ici) a été renommé en « ${libre} » pour laisser ` +
+          `passer « ${r.name} » venu de l'autre poste. À corriger dans la fiche produit.`,
+        )
+      }
+    }
+
     db.insert(products)
       .values({
         id: r.id, reference: r.reference, name: r.name, brand: r.brand, category: r.category,
@@ -541,8 +582,6 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[], fournies?: 
   }
 
   const applyRemoteToLocal = async (remote: ApiPurchaseOrder): Promise<void> => {
-    const isNew = !localOrders.some((o) => o.id === remote.id)
-
     db.insert(purchaseOrders)
       .values({
         id: remote.id, reference: remote.reference, supplierId: remote.supplierId,
@@ -565,36 +604,81 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[], fournies?: 
       })
       .run()
 
-    // Les items/tailles sont immuables après création (comme en local) : on ne
-    // les insère qu'à la découverte d'une commande totalement nouvelle. On va
-    // chercher le détail (show) pour récupérer les tailles, absentes de l'index().
-    if (isNew) {
-      for (const item of remote.items ?? []) {
-        db.insert(purchaseOrderItems)
-          .values({
-            id: item.id, orderId: remote.id, productId: item.productId,
+    // Les lignes et les pointures d'une commande NE SONT PAS immuables :
+    // `PurchaseOrderService.update()` en ajoute, en retire, et **remplace toutes
+    // les pointures par de nouveaux UUID** à chaque modification. Ne les écrire
+    // qu'à la découverte de la commande — l'ancien `if (isNew)` — laissait le
+    // poste receveur sur des détails périmés pour toujours : l'en-tête se mettait
+    // à jour, le contenu jamais. Comme les deux postes descendent d'une base
+    // commune, la commande existe déjà des deux côtés dans la quasi-totalité des
+    // cas : c'était le comportement NORMAL, pas un cas limite. D'où « les
+    // commandes sont arrivées mais je n'ai pas les détails » (19/08).
+    //
+    // On réconcilie donc l'intégralité du détail chaque fois que la version
+    // distante l'emporte.
+
+    // Le bundle /sync/pull porte déjà les pointures ; l'index() classique non,
+    // d'où l'aller-retour supplémentaire dans ce seul cas.
+    const porteLesTailles = (remote.items ?? []).some((i) => i.sizeCompositions !== undefined)
+    const detail = porteLesTailles ? remote : await apiGet<ApiPurchaseOrder>(cfg, `/purchase-orders/${remote.id}`)
+    // Sans source fiable pour les pointures (show() en échec), on met les lignes
+    // à jour mais on ne touche pas aux pointures : les effacer sur la foi d'une
+    // réponse vide perdrait une information que personne ne pourrait rendre.
+    const tailleFiable = detail !== null
+    const remoteItems = (detail ?? remote).items ?? []
+
+    // ── Retraits ────────────────────────────────────────────────────────────
+    // Une ligne absente de la version distante a été retirée sur l'autre poste.
+    // Exception : une ligne déjà réceptionnée ici est conservée — la réception
+    // locale y pointe et le stock en dépend ; on le signale plutôt que de casser.
+    const gardees = new Set(remoteItems.map((i) => i.id))
+    const localItems = db.select().from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.orderId, remote.id)).all()
+    for (const local of localItems) {
+      if (gardees.has(local.id)) continue
+      const dejaRecue = db.select({ id: receptionItems.id }).from(receptionItems)
+        .where(eq(receptionItems.orderItemId, local.id)).get()
+      if (dejaRecue) {
+        errors.push(
+          `purchase_orders (pull) ${remote.id} : ligne ${local.id} retirée sur l'autre poste ` +
+          `mais déjà réceptionnée ici — conservée.`,
+        )
+        continue
+      }
+      db.delete(cartonSizeCompositions).where(eq(cartonSizeCompositions.orderItemId, local.id)).run()
+      db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.id, local.id)).run()
+    }
+
+    // ── Ajouts et mises à jour ──────────────────────────────────────────────
+    for (const item of remoteItems) {
+      db.insert(purchaseOrderItems)
+        .values({
+          id: item.id, orderId: remote.id, productId: item.productId,
+          cartonsOrdered: item.cartonsOrdered, pairsPerCarton: item.pairsPerCarton,
+          unitCostPerCartonFcfa: item.unitCostPerCartonFcfa, notes: item.notes,
+          createdAt: item.createdAt, updatedAt: item.updatedAt,
+        })
+        .onConflictDoUpdate({
+          target: purchaseOrderItems.id,
+          set: {
+            orderId: remote.id, productId: item.productId,
             cartonsOrdered: item.cartonsOrdered, pairsPerCarton: item.pairsPerCarton,
             unitCostPerCartonFcfa: item.unitCostPerCartonFcfa, notes: item.notes,
-            createdAt: item.createdAt, updatedAt: item.updatedAt,
-          })
+            updatedAt: item.updatedAt,
+          },
+        })
+        .run()
+
+      if (!tailleFiable) continue
+
+      // Les pointures n'ont pas d'identité stable : on les remplace en bloc,
+      // exactement comme le fait `PurchaseOrderService.update()` en local.
+      db.delete(cartonSizeCompositions).where(eq(cartonSizeCompositions.orderItemId, item.id)).run()
+      for (const size of item.sizeCompositions ?? []) {
+        db.insert(cartonSizeCompositions)
+          .values({ id: size.id, orderItemId: item.id, size: size.size, pairsCount: size.pairsCount })
           .onConflictDoNothing()
           .run()
-      }
-
-      // Le bundle /sync/pull porte deja les tailles ; l'index() classique non,
-      // d'ou l'aller-retour supplementaire dans ce cas seulement. Le jeton d'un
-      // poste non configure ne peut de toute facon pas appeler show().
-      const porteLesTailles = (remote.items ?? []).some((i) => i.sizeCompositions !== undefined)
-      const detail = porteLesTailles
-        ? remote
-        : await apiGet<ApiPurchaseOrder>(cfg, `/purchase-orders/${remote.id}`)
-      for (const item of detail?.items ?? []) {
-        for (const size of item.sizeCompositions ?? []) {
-          db.insert(cartonSizeCompositions)
-            .values({ id: size.id, orderItemId: item.id, size: size.size, pairsCount: size.pairsCount })
-            .onConflictDoNothing()
-            .run()
-        }
       }
     }
   }
@@ -693,18 +777,60 @@ async function syncReceptions(cfg: SyncConfig, errors: string[], fournies?: ApiR
       })
       .onConflictDoUpdate({
         target: receptions.id,
-        set: { notes: remote.notes, updatedAt: remote.updatedAt, deletedAt: remote.deletedAt },
+        // Un arrivage est modifiable depuis la v1.3.0 : l'entrepôt et la date
+        // peuvent changer, et le stock en dépend. Ne recopier que les notes
+        // laissait le poste receveur sur l'ancien entrepôt.
+        set: {
+          orderId: remote.orderId, warehouseId: remote.warehouseId,
+          receptionDate: remote.receptionDate, notes: remote.notes,
+          updatedAt: remote.updatedAt, deletedAt: remote.deletedAt,
+        },
       })
       .run()
 
+    // Comme pour les commandes, les lignes d'un arrivage ne sont PAS immuables :
+    // `ReceptionService.update()` les efface et les recrée. On réconcilie donc,
+    // au lieu de se contenter d'insérer ce qui manque.
+    const gardees = new Set((remote.items ?? []).map((i) => i.id))
+    const locales = db.select().from(receptionItems)
+      .where(eq(receptionItems.receptionId, remote.id)).all()
+    let detailChange = locales.length !== gardees.size
+
+    for (const local of locales) {
+      if (gardees.has(local.id)) continue
+      db.delete(receptionItems).where(eq(receptionItems.id, local.id)).run()
+      detailChange = true
+    }
+
     for (const item of remote.items ?? []) {
+      const avant = locales.find((l) => l.id === item.id)
+      if (!avant
+        || avant.cartonsReceived !== item.cartonsReceived
+        || avant.orderItemId !== item.orderItemId) detailChange = true
+
       db.insert(receptionItems)
         .values({
           id: item.id, receptionId: remote.id, orderItemId: item.orderItemId,
           cartonsReceived: item.cartonsReceived, createdAt: item.createdAt, updatedAt: item.updatedAt,
         })
-        .onConflictDoNothing()
+        .onConflictDoUpdate({
+          target: receptionItems.id,
+          set: {
+            receptionId: remote.id, orderItemId: item.orderItemId,
+            cartonsReceived: item.cartonsReceived, updatedAt: item.updatedAt,
+          },
+        })
         .run()
+    }
+
+    // Les mouvements de stock ne voyagent jamais (chaque poste génère les siens
+    // pour un même événement réel, les transporter doublerait le stock) : on les
+    // rejoue. Si le détail a bougé, les anciens ne valent plus rien.
+    if (detailChange) {
+      db.delete(stockMovements).where(and(
+        eq(stockMovements.referenceType, 'reception'),
+        eq(stockMovements.referenceId, remote.id),
+      )).run()
     }
 
     replayReceptionMovements(remote)
@@ -1042,7 +1168,62 @@ export async function applyBundle(cfg: SyncConfig, bundle: SyncBundle, errors: s
   if (bundle.transfers)  pulled += (await syncTransfers(cfg, errors, bundle.transfers)).pulled
   if (bundle.sales)      pulled += (await syncSales(cfg, errors, bundle.sales)).pulled
 
+  rattraperMouvementsDeReception(errors)
+
   return pulled
+}
+
+/**
+ * Rejoue les entrées de stock des arrivages qui n'en ont aucune.
+ *
+ * Un arrivage ne produit ses mouvements que s'il retrouve la ligne de commande
+ * d'où il vient, avec ses pointures. Quand la commande descend incomplète — c'est
+ * précisément ce qui se passait avant le 19/08 — l'arrivage s'applique sans rien
+ * créer, et il ne repasse JAMAIS : sa date de mise à jour est désormais celle du
+ * serveur, donc `syncSimpleEntity` ne le rejoue plus. Le stock restait court sans
+ * qu'aucune erreur ne s'affiche.
+ *
+ * Ce rattrapage tourne à la fin de chaque application de bundle : il ne coûte
+ * rien quand tout va bien (aucun arrivage sans mouvement) et referme le trou dès
+ * que la commande manquante finit par arriver.
+ */
+function rattraperMouvementsDeReception(errors: string[]): void {
+  const db = getDb()
+
+  for (const reception of db.select().from(receptions).all()) {
+    if (reception.deletedAt || hasMovementsFor(reception.id)) continue
+
+    const items = db.select().from(receptionItems)
+      .where(eq(receptionItems.receptionId, reception.id)).all()
+    if (items.length === 0) continue
+
+    try {
+      replayReceptionMovements({
+        id:            reception.id,
+        orderId:       reception.orderId,
+        warehouseId:   reception.warehouseId,
+        receptionDate: reception.receptionDate,
+        notes:         reception.notes,
+        createdAt:     reception.createdAt,
+        updatedAt:     reception.updatedAt,
+        deletedAt:     reception.deletedAt,
+        items: items.map((i) => ({
+          id: i.id, receptionId: reception.id, orderItemId: i.orderItemId,
+          cartonsReceived: i.cartonsReceived, createdAt: i.createdAt, updatedAt: i.updatedAt,
+        })),
+      } as ApiReception)
+    } catch (e) {
+      errors.push(`receptions (stock) ${reception.id}: ${errMessage(e)}`)
+      continue
+    }
+
+    if (!hasMovementsFor(reception.id)) {
+      errors.push(
+        `receptions (stock) ${reception.id} : entrées de stock impossibles à rejouer — ` +
+        `la commande d'origine ou ses pointures manquent encore sur ce poste.`,
+      )
+    }
+  }
 }
 
 // ─── Orchestration ─────────────────────────────────────────────────────────────

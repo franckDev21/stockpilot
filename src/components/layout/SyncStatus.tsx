@@ -120,7 +120,27 @@ export function SyncStatus() {
                       {lastSummary.pushed} envoyé(s), {lastSummary.pulled} reçu(s)
                     </p>
                     {lastSummary.errors.length > 0 && (
-                      <p className="text-red-500">{lastSummary.errors.length} erreur(s) — voir logs</p>
+                      /* « N erreur(s) — voir logs » ne disait rien à personne :
+                         une ligne que la synchro n'a pas pu écrire disparaissait
+                         en silence, et on croyait le poste à jour. On montre
+                         maintenant ce qui a été refusé, ici, en clair. */
+                      <div className="space-y-1 pt-1 border-t border-slate-200 dark:border-slate-600">
+                        <p className="font-semibold text-red-500">
+                          {lastSummary.errors.length} ligne(s) non appliquée(s) sur ce poste
+                        </p>
+                        <ul className="space-y-0.5 max-h-32 overflow-y-auto">
+                          {lastSummary.errors.slice(0, 8).map((err, i) => (
+                            <li key={i} className="text-[11px] text-red-500/90 break-words leading-snug">
+                              {err}
+                            </li>
+                          ))}
+                        </ul>
+                        {lastSummary.errors.length > 8 && (
+                          <p className="text-[11px] text-slate-400">
+                            … et {lastSummary.errors.length - 8} autre(s).
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
