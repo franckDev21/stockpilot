@@ -7,6 +7,46 @@ faut savoir pour continuer est ici.
 
 ## 📌 POINT DE REPRISE — 19/08/2026, 16 h — LIRE EN PREMIER (remplace tout ce qui suit)
 
+### 🔴 EN ATTENTE : rendre `sync:push` au jeton des postes
+
+Pour protéger la restauration ci-dessous d'un poste resté en 1.9.0, le jeton de
+production **id = 13 (`poste-upload`)** a été réduit à `["backups:upload","sync:pull"]` :
+**les postes reçoivent, ils n'envoient plus.** À remettre dès que les DEUX postes
+affichent **1.10.1** :
+
+```sql
+UPDATE personal_access_tokens
+   SET abilities = '["backups:upload","sync:push","sync:pull"]' WHERE id = 13;
+```
+
+Tant que le verrou tient, les postes affichent une erreur d'envoi (403) ; la saisie
+locale n'est pas perdue, elle attend (`marquerSynchronise` n'avance qu'en cas de succès).
+
+### ✅ Restauration des données — faite le 19/08 vers 15 h 50
+
+Franck : « oui remets-les, remets tout ». **26 lignes rendues vivantes** en une
+transaction : **24 commandes + 1 produit + 1 fournisseur**, toutes supprimées dans la même
+fenêtre du 21–25/07. Prod passée à **27 commandes vivantes, 0 supprimée**, 33 produits,
+5 fournisseurs, 0 référence en double. Les 41 lignes de détail et les 3 règlements
+n'avaient jamais été touchés.
+
+- ⚠️ Le produit ressuscité « Gucci » portait la référence **A255**, déjà prise par le
+  produit vivant « copa » → renommé **A255-2** (même règle que la synchro : le vivant
+  garde sa référence). À trancher dans la fiche produit.
+- Sauvegardes hors session : `/home/admin/backups/stockpilot-prod-20260819-avant-restauration.sql`
+  et le retour arrière ligne à ligne `stockpilot-ROLLBACK-restauration-20260819.sql`.
+- ⚠️ `docker exec` **sans `-i`** avale le heredoc : la première tentative n'a rien fait
+  **et n'a rien affiché**. Toujours `docker exec -i` pour psql.
+
+### Ce qu'on attend de Franck (parti tester le 19/08 à 16 h)
+
+1. Ouvrir, **fermer et rouvrir** l'app sur les deux postes (deux passes : la première
+   télécharge la mise à jour, la seconde l'applique) → vérifier **1.10.1** des deux côtés.
+2. Sur B : « Synchroniser » → il doit voir **27 commandes**, et le bandeau orange des
+   lignes rétablies → **« Les garder »**.
+3. Dès qu'il confirme 1.10.1 sur les deux postes : **relever le verrou du jeton**.
+
+
 ### v1.10.0 — « j'ai supprimé pour recharger », et tout a disparu
 
 **Ce qui s'est passé.** Le poste B recevait un tableau de commandes incomplet. Franck a
