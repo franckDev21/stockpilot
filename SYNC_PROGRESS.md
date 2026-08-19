@@ -531,7 +531,7 @@ définitivement. Même famille de bug que celui de FEUJIO du 11/08.
 3. Rejouer le banc deux postes headless avec un scénario « commande modifiée » et
    « référence en collision » — les 27 assertions actuelles ne couvrent que la création.
 
-### ✅ Corrigé le 19/08 (commits `527a42b` desktop / `dabdba4` API) — PAS ENCORE DÉPLOYÉ
+### ✅ Corrigé ET DÉPLOYÉ le 19/08 (desktop `527a42b` + **v1.8.0** / API `dabdba4` + `50cfa91`)
 
 | Défaut | Correction |
 |---|---|
@@ -554,8 +554,10 @@ modification de la synchro.
 
 ### Ce qui reste ouvert
 
-1. **Déploiement** : API à déployer (migration comprise), puis desktop en **v1.8.0** — les
-   deux postes ne recevront la correction qu'après redémarrage de l'application.
+1. ~~Déploiement~~ **FAIT** : API déployée (CI + deploy verts), migration `000016` `Ran` en
+   prod, index partiel vérifié ; desktop **v1.8.0** publiée, `latest.yml` en anonyme →
+   `version: 1.8.0`, installeur → 206. ⚠️ **Les deux postes ne reçoivent la correction
+   qu'après avoir fermé et rouvert l'application.**
 2. **Pourquoi 0 pointure sur le serveur de prod** reste non expliqué : le serveur les
    accepte (test vert sur l'ancien code aussi). Il faut voir la base d'un poste pour
    savoir s'il les envoie. → demander les 2 bases via « Envoyer plutôt le fichier de base ».
