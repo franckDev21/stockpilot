@@ -451,3 +451,82 @@ avant et après fusion.
 - Limite laissée telle quelle : `order_payments` est **supprimé en dur** côté API (pas de
   `SoftDeletes` sur le modèle, pas de colonne `deleted_at`), donc la suppression d'un
   paiement de commande ne redescend pas vers le second poste.
+
+---
+
+## 🔴 19/08/2026 — « la synchro ne marche que partiellement » : diagnostic
+
+### Ce que Franck a constaté
+
+1. Poste A → « Envoyer au serveur » : *tout est parti*. Poste B → « Synchroniser » :
+   les commandes arrivent **mais leurs détails sont incomplets**.
+2. Produit créé ensuite sur A : **jamais apparu sur B**.
+
+### Ce qui est vérifié côté serveur (mesuré, pas supposé)
+
+- Les deux postes parlent vraiment à l'API : `POST /sync/push` et `GET /sync/pull`
+  **200** le 19/08 entre 13:31 et 13:36 depuis `143.105.152.71` (UA `node`).
+- Le serveur porte bien les données du client : 32 produits, 24 commandes,
+  34 lignes de commande, 5 fournisseurs, 3 entrepôts.
+- Le produit `lv` (réf. `A237-17`, créé le 19/08 à 10:18) **EST sur le serveur**.
+  Donc l'envoi depuis A a fonctionné : ce qui a échoué, c'est son application sur B.
+- ⚠️ `carton_size_compositions` = **0 ligne** alors que 34 lignes de commande existent :
+  les pointures ne sont jamais arrivées.
+- `receptions`, `sales`, `stock_movements` = 0.
+- Aucune erreur dans `laravel.log` depuis le 17/08 : les échecs sont **silencieux**.
+
+### Cause n°1 — les lignes et pointures d'une commande sont traitées comme immuables
+
+C'est l'explication des « détails incomplets ». Or dans l'application elles ne le sont
+pas : `PurchaseOrderService.update()` modifie les lignes, supprime celles qu'on retire et
+**remplace toutes les pointures par de nouveaux UUID à chaque modification**.
+
+- **Poste receveur** — `sync.service.ts` `syncPurchaseOrders.applyRemoteToLocal()` :
+  les lignes et pointures ne sont insérées que `if (isNew)`, c.-à-d. seulement si la
+  commande était **totalement inconnue** du poste. Une commande déjà présente voit son
+  en-tête mis à jour et **ses détails jamais touchés**.
+- **Serveur** — `SyncPushController::insertChild()` : `if (find($row['id']) !== null) return;`
+  → jamais de mise à jour, jamais de suppression d'une ligne retirée sur le poste.
+
+Conséquence : une commande modifiée sur A arrive sur B avec le bon en-tête et les
+**anciennes** lignes. Et comme les deux postes descendent d'une base commune, la plupart
+des commandes existent déjà des deux côtés → le cas « détails jamais mis à jour » est le
+cas **normal**, pas le cas rare.
+
+⚠️ Le même `insertChild` sert aux **réceptions**, qui sont modifiables depuis la v1.3.0 et
+qui **pilotent le stock** (le serveur rejoue les mouvements à partir de sa copie). Une
+réception corrigée sur un poste laisse donc le serveur — et l'autre poste — sur les
+quantités d'avant.
+
+### Cause n°2 — un refus à l'application est invisible
+
+`syncSimpleEntity()` attrape chaque erreur ligne par ligne et la range dans `errors[]`.
+L'interface (`SyncStatus.tsx`) n'en affiche que le nombre : « N erreur(s) — voir logs ».
+Un produit qui n'a pas pu être écrit disparaît donc **sans un mot**.
+
+### Cause n°3 — collision de référence produit (piste n°1 pour le produit `lv`)
+
+`applyRemoteToLocal` des produits fait `onConflictDoUpdate({ target: products.id })` :
+seul un conflit d'**id** est prévu. Si le poste B possède déjà un produit portant la
+référence `A237-17` sous un **autre id** (les références sont saisies à la main, les deux
+postes numérotent pareil), l'index unique sur `reference` déclenche une erreur, avalée par
+la cause n°2 → le produit n'arrive jamais, et n'arrivera jamais.
+
+À confirmer sur la base réelle de B (voir « à faire »).
+
+### Cause n°4 — l'unicité de `products.reference` est aveugle au soft delete côté API
+
+Postgres : `products_reference_unique UNIQUE btree (reference)` — sans
+`WHERE deleted_at IS NULL`. Côté poste l'index est **partiel** (corrigé le 22/07).
+Une référence libérée sur un poste reste donc prise sur le serveur : l'envoi est refusé
+définitivement. Même famille de bug que celui de FEUJIO du 11/08.
+
+### À faire
+
+1. Récupérer **les deux bases** (bouton « Envoyer plutôt le fichier de base » sur chaque
+   poste) pour prouver les causes 1 et 3 sur les vraies données.
+2. Corriger : réconciliation complète des lignes/pointures dans les deux sens, remontée
+   visible des refus, règle de résolution des références en collision, index unique
+   partiel côté API.
+3. Rejouer le banc deux postes headless avec un scénario « commande modifiée » et
+   « référence en collision » — les 27 assertions actuelles ne couvrent que la création.
