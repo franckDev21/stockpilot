@@ -1,0 +1,8 @@
+node_modules/
+userdata/
+*.cjs
+*.db
+*.db-shm
+*.db-wal
+.env
+package-lock.json
