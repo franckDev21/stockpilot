@@ -29,6 +29,17 @@ Sur le code d'avant, les points 4 et 5 échouent : B reste à zéro **et A perd 
 commandes**. C'est la preuve que la règle « une suppression ne part que sur ordre
 explicite » n'est pas décorative.
 
+## `bench-refus.ts` — quand le serveur refuse l'envoi (12 assertions)
+
+Le 19/08 à 16 h 15, « Supprimer partout » a répondu « Invalid ability provided. » : le
+droit d'écriture du jeton avait été retiré. Ce banc tient les deux défauts que ça a
+révélés — un message de serveur servi tel quel au client, et des lignes marquées
+supprimées sur le poste avant un envoi qui échoue.
+
+Seul banc à **ne pas** demander l'API Laravel : c'est la réaction du poste à un refus
+qu'on éprouve, un serveur bouchon suffit et permet de rejouer le 403 à volonté.
+**4 assertions échouent sur le code d'avant.**
+
 ## `bench-detail.ts` — les détails qui ne circulaient pas (25 assertions)
 
 Le scénario exact rapporté le 19/08 :
@@ -71,7 +82,11 @@ docker run --rm --network host -v "$PWD":/bench -v /chemin/vers/stockpilot:/repo
   -e BENCH_USERDATA=/bench/userdata -e APP_ROOT=/bench node:20 node bench-detail.cjs
 docker run --rm --network host -v "$PWD":/bench -v /chemin/vers/stockpilot:/repo:ro -w /bench \
   -e BENCH_USERDATA=/bench/userdataA -e APP_ROOT=/bench node:20 node bench-suppression.cjs
+docker run --rm --network host -v "$PWD":/bench -v /chemin/vers/stockpilot:/repo:ro -w /bench \
+  -e BENCH_USERDATA=/bench/userdataRefus -e APP_ROOT=/bench node:20 node bench-refus.cjs
 ```
+
+`bench-refus.cjs` se lance seul : ni API, ni jeton, ni `.env`.
 
 ## Pièges
 

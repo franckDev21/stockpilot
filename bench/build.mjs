@@ -13,7 +13,7 @@ const stubs = {
 }
 
 await build({
-  entryPoints: ['/bench/bench-detail.ts', '/bench/bench-suppression.ts'],
+  entryPoints: ['/bench/bench-detail.ts', '/bench/bench-suppression.ts', '/bench/bench-refus.ts'],
   bundle: true,
   platform: 'node',
   format: 'cjs',

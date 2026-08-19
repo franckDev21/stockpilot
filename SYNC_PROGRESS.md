@@ -5,30 +5,50 @@ faut savoir pour continuer est ici.
 
 ---
 
-## 📌 POINT DE REPRISE — 19/08/2026, 16 h — LIRE EN PREMIER (remplace tout ce qui suit)
+## 📌 POINT DE REPRISE — 19/08/2026, 16 h 45 — LIRE EN PREMIER (remplace tout ce qui suit)
 
-### 🔴 EN ATTENTE : rendre `sync:push` au jeton des postes
+### ✅ Les 27 commandes sont supprimées (demande de Franck, 19/08 ~16 h 20)
 
-Pour protéger la restauration ci-dessous d'un poste resté en 1.9.0, le jeton de
-production **id = 13 (`poste-upload`)** a été réduit à `["backups:upload","sync:pull"]` :
-**les postes reçoivent, ils n'envoient plus.** À remettre dès que les DEUX postes
-affichent **1.10.1** :
+Franck : « je veux delete toutes les 27 commandes là ». Fait **sur le serveur**, en une
+transaction : `deleted_at = now(), updated_at = now()` sur les 27 lignes vivantes.
+Prod : **0 commande vivante, 27 supprimées**.
+
+- Suppression **logique** (comme celle de l'application) : les 41 lignes de détail et les
+  3 règlements sont physiquement intacts, ils n'ont pas de `deleted_at`. Aucun arrivage,
+  aucun mouvement de stock n'était rattaché → le stock n'a pas bougé.
+- Les postes reçoivent la suppression **tout seuls** au prochain pull : `/sync/pull` sert
+  les lignes supprimées (`withTrashed`) — vérifié sur le fil, les 27 descendent avec
+  `deletedAt` **et** un `updatedAt` neuf, donc plus récent que la copie des postes. Aucun
+  poste ne peut les ressusciter (`isNewer` côté API refuse plus ancien que soi).
+- Sauvegardes hors session :
+  `/home/admin/backups/stockpilot-prod-20260819-avant-suppression-27-commandes.sql` (5,4 Mo)
+  et le retour arrière ligne à ligne
+  `/home/admin/backups/stockpilot-ROLLBACK-suppression-27-commandes-20260819.sql`
+  (27 `UPDATE` qui remettent `deleted_at = NULL` et l'`updated_at` d'origine).
+
+### ✅ Verrou du jeton levé — c'était la cause de l'erreur de Franck
+
+« Quand je clique sur supprimer, j'ai une erreur du type post token key » : le poste
+recevait **403 « Invalid ability provided. »** sur `POST /api/v1/sync/push`
+(nginx de l'hôte, 19/08 16:15:26 et 16:17:03, IP du poste). C'était le verrou posé une
+heure plus tôt pour protéger la restauration. Le jeton **id = 13 (`poste-upload`)** a
+retrouvé ses trois droits :
 
 ```sql
+-- appliqué le 19/08 à 16 h 24
 UPDATE personal_access_tokens
    SET abilities = '["backups:upload","sync:push","sync:pull"]' WHERE id = 13;
 ```
 
-Tant que le verrou tient, les postes affichent une erreur d'envoi (403) ; la saisie
-locale n'est pas perdue, elle attend (`marquerSynchronise` n'avance qu'en cas de succès).
+Le poste qui synchronisait était bien en 1.10.x (il envoie `complet: true` et affiche
+« Supprimer partout »), donc il ne peut plus propager de suppression non demandée.
 
-### ✅ Restauration des données — faite le 19/08 vers 15 h 50
+### ✅ Restauration des données — faite le 19/08 vers 15 h 50 (annulée depuis, voir ci-dessus)
 
-Franck : « oui remets-les, remets tout ». **26 lignes rendues vivantes** en une
-transaction : **24 commandes + 1 produit + 1 fournisseur**, toutes supprimées dans la même
-fenêtre du 21–25/07. Prod passée à **27 commandes vivantes, 0 supprimée**, 33 produits,
-5 fournisseurs, 0 référence en double. Les 41 lignes de détail et les 3 règlements
-n'avaient jamais été touchés.
+**26 lignes rendues vivantes** en une transaction : **24 commandes + 1 produit +
+1 fournisseur**, toutes supprimées dans la même fenêtre du 21–25/07. Les 24 commandes
+font partie des 27 supprimées à 16 h 20 à la demande de Franck ; **le produit et le
+fournisseur restent vivants**.
 
 - ⚠️ Le produit ressuscité « Gucci » portait la référence **A255**, déjà prise par le
   produit vivant « copa » → renommé **A255-2** (même règle que la synchro : le vivant
@@ -38,14 +58,38 @@ n'avaient jamais été touchés.
 - ⚠️ `docker exec` **sans `-i`** avale le heredoc : la première tentative n'a rien fait
   **et n'a rien affiché**. Toujours `docker exec -i` pour psql.
 
-### Ce qu'on attend de Franck (parti tester le 19/08 à 16 h)
+### v1.10.2 — un refus du serveur se lit, et ne laisse plus le poste à moitié vidé
+
+Les deux défauts que l'erreur de Franck a révélés :
+
+1. **Le message du serveur était affiché tel quel** — « Entrepôts : Invalid ability
+   provided. » Illisible pour qui n'écrit pas d'API, et surtout inquiétant : rien ne
+   disait que les données attendaient sagement sur le poste. Un 401/403 devient
+   maintenant une phrase en français qui dit ce qui s'est passé, que rien n'est perdu et
+   qu'il faut prévenir le support — le message technique restant entre parenthèses pour
+   le diagnostic.
+2. **« Supprimer partout » marquait les lignes supprimées ICI avant l'envoi**, et les y
+   laissait quand l'envoi échouait. Elles disparaissaient du poste alors qu'elles
+   vivaient toujours sur le serveur, puis revenaient seules trois minutes plus tard. Le
+   poste **revient maintenant à son état d'avant le clic** si l'envoi ne passe pas ; la
+   demande, elle, reste mémorisée, donc l'avertissement revient et le bouton peut être
+   recliqué.
+
+**Preuve : `bench/bench-refus.ts`** (commité) — un serveur bouchon qui rejoue le 403 à
+volonté, contre une vraie base SQLite. **12 assertions vertes ; 4 échouent sur le code
+d'avant**, dont le message exact qu'a vu Franck. Pas besoin de l'API Laravel ici : c'est
+la réaction du poste à un refus qu'on éprouve. `tsc --noEmit` et `vite build` verts.
+
+### Ce qu'on attend de Franck
 
 1. Ouvrir, **fermer et rouvrir** l'app sur les deux postes (deux passes : la première
-   télécharge la mise à jour, la seconde l'applique) → vérifier **1.10.1** des deux côtés.
-2. Sur B : « Synchroniser » → il doit voir **27 commandes**, et le bandeau orange des
-   lignes rétablies → **« Les garder »**.
-3. Dès qu'il confirme 1.10.1 sur les deux postes : **relever le verrou du jeton**.
-
+   télécharge la mise à jour, la seconde l'applique) → vérifier **1.10.2** des deux côtés.
+2. Sur chaque poste : « Synchroniser » → **plus aucune commande**, et plus d'erreur
+   d'envoi. Si le bandeau orange des lignes rétablies est encore là, **« Les garder »**
+   suffit à le fermer (les commandes sont déjà supprimées partout).
+3. Toujours ouvert depuis le 19/08 : **0 pointure sur le serveur**
+   (`carton_size_compositions`) — il faut la base d'un poste pour trancher, via
+   « Envoyer plutôt le fichier de base ».
 
 ### v1.10.0 — « j'ai supprimé pour recharger », et tout a disparu
 

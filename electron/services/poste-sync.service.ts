@@ -265,6 +265,31 @@ interface ReponsePush {
   rejected?:      Array<{ entity: string; id: string; reason: string }>
 }
 
+/**
+ * Traduire un refus du serveur en une phrase que le client peut lire.
+ *
+ * Le serveur refuse en langage de serveur : un jeton sans droit d'écriture
+ * renvoie « Invalid ability provided. ». Affichée telle quelle dans le panneau
+ * de synchro, cette phrase n'a rien dit à personne — le 19/08 elle a été lue
+ * comme « une erreur post token key » — et surtout elle laissait croire que la
+ * saisie du poste était perdue, alors qu'elle attend simplement ici.
+ */
+function messageRefus(status: number, brut: string): string {
+  const detail = brut === '' ? '' : ` (${brut})`
+  const rassurance = ' Rien n’est perdu : vos données restent sur ce poste et repartiront'
+    + ' toutes seules dès que l’accès sera rétabli.'
+
+  if (status === 401) {
+    return 'Le serveur n’a pas reconnu ce poste : sa clé d’accès est invalide ou a été révoquée.'
+      + rassurance + ' Prévenez le support' + detail + '.'
+  }
+  if (status === 403) {
+    return 'Le serveur a refusé l’envoi : ce poste n’a pas le droit d’écrire sur le serveur.'
+      + rassurance + ' Prévenez le support' + detail + '.'
+  }
+  return 'Le serveur a refusé ces données' + detail + '.'
+}
+
 async function envoyerLot(apiUrl: string, token: string, body: unknown): Promise<ReponsePush> {
   let derniereErreur = ''
 
@@ -286,14 +311,14 @@ async function envoyerLot(apiUrl: string, token: string, body: unknown): Promise
       const json = (text ? JSON.parse(text) : {}) as Record<string, unknown>
 
       if (!res.ok) {
-        const message = typeof json.error === 'string'
+        const brut = typeof json.error === 'string'
           ? json.error
           : typeof json.message === 'string' ? json.message : `HTTP ${res.status}`
         // 401/403/422 : rien ne servirait de réessayer.
         if (res.status === 401 || res.status === 403 || res.status === 422) {
-          throw new ErreurDefinitive(message)
+          throw new ErreurDefinitive(messageRefus(res.status, brut))
         }
-        derniereErreur = message
+        derniereErreur = brut
         continue
       }
 
@@ -853,9 +878,20 @@ export async function appliquerSuppressions(): Promise<{
   const sqlite = getSqlite()
   const maintenant = new Date().toISOString()
   const ids = new Set<string>()
+  // Ce qu'on écrase, pour pouvoir le remettre. Sans ça, un envoi refusé (serveur
+  // injoignable, droit d'écriture retiré — cas réel du 19/08) laissait le poste
+  // dans un état que personne n'avait demandé : les lignes disparaissaient ici
+  // alors qu'elles restaient vivantes sur le serveur, puis revenaient seules à
+  // la synchro suivante, sans qu'un mot explique ce va-et-vient.
+  const avant: Array<{ table: string; id: string; deletedAt: string | null }> = []
   for (const ligne of lignes) {
     const table = TABLES[ligne.entite]
     if (table === undefined) continue
+    const etat = sqlite.prepare(`SELECT deleted_at FROM ${table} WHERE id = ?`).get(ligne.id) as
+      { deleted_at: string | null } | undefined
+    // Plus là du tout : rien à supprimer, et rien à envoyer non plus.
+    if (etat === undefined) continue
+    avant.push({ table, id: ligne.id, deletedAt: etat.deleted_at })
     // Les triggers SQLite remontent `updated_at` : la suppression est donc plus
     // récente que la version du serveur, et gagne l'arbitrage là-bas.
     sqlite.prepare(`UPDATE ${table} SET deleted_at = ? WHERE id = ?`).run(maintenant, ligne.id)
@@ -863,7 +899,17 @@ export async function appliquerSuppressions(): Promise<{
   }
 
   const envoi = await pushAllData({ depuis: null, suppressions: ids })
-  if (envoi.success) oublierSuppressionsRetablies()
+  if (envoi.success) {
+    oublierSuppressionsRetablies()
+  } else {
+    // Retour à l'état d'avant le clic. La demande, elle, reste mémorisée :
+    // l'avertissement revient et le bouton pourra être recliqué une fois le
+    // serveur de nouveau joignable. (`updated_at` remonte au passage, ce qui est
+    // sans effet : la ligne redevient vivante ici comme elle l'est là-bas.)
+    for (const etat of avant) {
+      sqlite.prepare(`UPDATE ${etat.table} SET deleted_at = ? WHERE id = ?`).run(etat.deletedAt, etat.id)
+    }
+  }
 
   return {
     success:    envoi.success,
