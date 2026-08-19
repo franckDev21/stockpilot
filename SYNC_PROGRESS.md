@@ -11,7 +11,13 @@ faut savoir pour continuer est ici.
 
 Franck : « je veux delete toutes les 27 commandes là ». Fait **sur le serveur**, en une
 transaction : `deleted_at = now(), updated_at = now()` sur les 27 lignes vivantes.
-Prod : **0 commande vivante, 27 supprimées**.
+Prod : **27 supprimées**.
+
+⚠️ **Une 28ᵉ commande est apparue vivante à 16 h 34** : `CMD-1787148865415` (brouillon,
+12 cartons « billionaire », 2 400 000 F), **créée sur le poste à 16 h 14** — donc avant la
+suppression. Elle était bloquée à quai par le 403 ; dès le verrou levé, le poste l'a
+envoyée. **Ce n'est pas une des 27** (vérifié : son identifiant n'est pas dans le fichier
+de rollback) et elle n'a **pas** été supprimée : Franck n'a demandé que les 27.
 
 - Suppression **logique** (comme celle de l'application) : les 41 lignes de détail et les
   3 règlements sont physiquement intacts, ils n'ont pas de `deleted_at`. Aucun arrivage,
@@ -84,8 +90,9 @@ la réaction du poste à un refus qu'on éprouve. `tsc --noEmit` et `vite build`
 
 1. Ouvrir, **fermer et rouvrir** l'app sur les deux postes (deux passes : la première
    télécharge la mise à jour, la seconde l'applique) → vérifier **1.10.2** des deux côtés.
-2. Sur chaque poste : « Synchroniser » → **plus aucune commande**, et plus d'erreur
-   d'envoi. Si le bandeau orange des lignes rétablies est encore là, **« Les garder »**
+2. Sur chaque poste : « Synchroniser » → **plus aucune commande sauf `CMD-1787148865415`**
+   (voir ci-dessus), et plus d'erreur d'envoi — prouvé en prod : `POST /sync/push` répond
+   **200** depuis 16 h 34, et le poste a déjà tiré les 27 tombstones. Si le bandeau orange des lignes rétablies est encore là, **« Les garder »**
    suffit à le fermer (les commandes sont déjà supprimées partout).
 3. Toujours ouvert depuis le 19/08 : **0 pointure sur le serveur**
    (`carton_size_compositions`) — il faut la base d'un poste pour trancher, via
