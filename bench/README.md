@@ -29,12 +29,13 @@ Sur le code d'avant, les points 4 et 5 échouent : B reste à zéro **et A perd 
 commandes**. C'est la preuve que la règle « une suppression ne part que sur ordre
 explicite » n'est pas décorative.
 
-## `bench-refus.ts` — quand le serveur refuse l'envoi (12 assertions)
+## `bench-refus.ts` — quand le serveur refuse l'envoi (19 assertions)
 
 Le 19/08 à 16 h 15, « Supprimer partout » a répondu « Invalid ability provided. » : le
 droit d'écriture du jeton avait été retiré. Ce banc tient les deux défauts que ça a
 révélés — un message de serveur servi tel quel au client, et des lignes marquées
-supprimées sur le poste avant un envoi qui échoue.
+supprimées sur le poste avant un envoi qui échoue. Il couvre aussi le bandeau des lignes
+rétablies, qui ne se vidait jamais tout seul (v1.10.3).
 
 Seul banc à **ne pas** demander l'API Laravel : c'est la réaction du poste à un refus
 qu'on éprouve, un serveur bouchon suffit et permet de rejouer le 403 à volonté.

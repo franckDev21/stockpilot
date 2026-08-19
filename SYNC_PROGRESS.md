@@ -86,13 +86,32 @@ volonté, contre une vraie base SQLite. **12 assertions vertes ; 4 échouent sur
 d'avant**, dont le message exact qu'a vu Franck. Pas besoin de l'API Laravel ici : c'est
 la réaction du poste à un refus qu'on éprouve. `tsc --noEmit` et `vite build` verts.
 
+### ✅ Suppression TOTALE + v1.10.3 — 19/08, 16 h 50
+
+Franck : « j'ai toujours la notification 28 commandes en attente, et quand je delete j'en
+ai encore 1 qui s'affiche — delete all les commandes directement en bd ».
+
+- **Fait** : les 28 commandes sont supprimées en prod (**0 vivante, 28 supprimées**),
+  la 28ᵉ (`CMD-1787148865415`) comprise. Vérifié aussi sur le fil : `/sync/pull` sert
+  28 lignes, **28 avec tombstone, 0 vivante**. Sauvegardes :
+  `stockpilot-prod-20260819-avant-suppression-totale.sql` et
+  `stockpilot-ROLLBACK-suppression-totale-20260819.sql`.
+- **La notification, elle, était un défaut de l'application** : `suppressions-retablies.json`
+  ne se vidait **jamais** tout seul. Une fois les commandes supprimées partout, le poste
+  annonçait encore « 28 commandes rétablies » alors qu'il n'en restait aucune nulle part,
+  et le bandeau revenait à chaque ouverture. **v1.10.3** : l'avertissement ne liste plus
+  que les lignes **encore vivantes sur le poste** — dès que le serveur a supprimé la ligne
+  à son tour, il n'y a plus rien à arbitrer et l'entrée est purgée du fichier.
+  Preuve : `bench-refus.ts` passe à **19 assertions**, dont **6 qui échouent en 1.10.2**.
+
 ### Ce qu'on attend de Franck
 
 1. Ouvrir, **fermer et rouvrir** l'app sur les deux postes (deux passes : la première
-   télécharge la mise à jour, la seconde l'applique) → vérifier **1.10.2** des deux côtés.
-2. Sur chaque poste : « Synchroniser » → **plus aucune commande sauf `CMD-1787148865415`**
-   (voir ci-dessus), et plus d'erreur d'envoi — prouvé en prod : `POST /sync/push` répond
-   **200** depuis 16 h 34, et le poste a déjà tiré les 27 tombstones. Si le bandeau orange des lignes rétablies est encore là, **« Les garder »**
+   télécharge la mise à jour, la seconde l'applique) → vérifier **1.10.3** des deux côtés.
+2. Sur chaque poste : « Synchroniser » → **plus aucune commande du tout**, plus d'erreur
+   d'envoi (prouvé en prod : `POST /sync/push` répond **200** depuis 16 h 34) et, en
+   1.10.3, **plus de bandeau orange** — il se purge tout seul. En 1.10.2 il faut encore
+   cliquer « Les garder » une fois. Si le bandeau orange des lignes rétablies est encore là, **« Les garder »**
    suffit à le fermer (les commandes sont déjà supprimées partout).
 3. Toujours ouvert depuis le 19/08 : **0 pointure sur le serveur**
    (`carton_size_compositions`) — il faut la base d'un poste pour trancher, via

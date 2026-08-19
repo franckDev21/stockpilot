@@ -74,6 +74,24 @@ export function memoriserSuppressionsRetablies(lignes: SuppressionRetablie[]): v
   }
 }
 
+/**
+ * Réécrit la liste telle quelle — pour en retirer ce qui n'a plus lieu d'être
+ * arbitré (voir `suppressionsEnAttente`). Liste vide = plus de fichier du tout.
+ */
+export function remplacerSuppressionsRetablies(lignes: SuppressionRetablie[]): void {
+  if (lignes.length === 0) {
+    oublierSuppressionsRetablies()
+
+    return
+  }
+  try {
+    fs.mkdirSync(path.dirname(fichierSuppressions()), { recursive: true })
+    fs.writeFileSync(fichierSuppressions(), JSON.stringify(lignes, null, 2), 'utf-8')
+  } catch {
+    // La mémoire est un confort : son échec ne doit pas faire échouer la synchro.
+  }
+}
+
 export function oublierSuppressionsRetablies(): void {
   try {
     fs.unlinkSync(fichierSuppressions())

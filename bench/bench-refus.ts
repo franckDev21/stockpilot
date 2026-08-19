@@ -17,7 +17,10 @@ import { PurchaseOrderService } from '/repo/electron/services/purchase-order.ser
 //   2. les lignes étaient marquées supprimées ICI avant l'envoi, et y restaient
 //      quand l'envoi échouait : elles disparaissaient du poste alors qu'elles
 //      vivaient toujours sur le serveur, puis revenaient seules trois minutes
-//      plus tard, sans qu'un mot explique ce va-et-vient.
+//      plus tard, sans qu'un mot explique ce va-et-vient ;
+//   3. l'avertissement lui-même ne se vidait jamais tout seul — une fois les
+//      28 commandes supprimées sur le serveur, le poste annonçait encore
+//      « 28 commandes rétablies » alors qu'il n'en restait aucune nulle part.
 //
 // Pas besoin de l'API Laravel ici : c'est la RÉACTION DU POSTE à un refus qu'on
 // éprouve. Un serveur bouchon suffit, et il permet de rejouer le 403 à volonté.
@@ -130,6 +133,42 @@ async function main(): Promise<void> {
     recu.some((r) => r.id === commande.id && typeof r.deleted_at === 'string' && r.deleted_at !== ''),
     `→ ${JSON.stringify(recu.map((r) => ({ id: r.id, deleted_at: r.deleted_at })))}`)
   verifier('l’avertissement disparaît', suppressionsEnAttente().length === 0)
+
+  console.log('\n══ Le bandeau ne survit pas à ce qu’il annonce ══')
+  // Trois lignes en attente : une bien vivante ici (l'avertissement a un sens),
+  // une que le serveur vient de supprimer à son tour et dont le pull a fait
+  // descendre la suppression, une qui n'existe tout simplement plus.
+  const vivante = new PurchaseOrderService().create({
+    supplierId: ids.supplier, orderDate: '2026-08-19', status: 'confirmed',
+    productCostFcfa: 500000, freightCostFcfa: 0, customsCostFcfa: 0, otherCostsFcfa: 0,
+    items: [{ productId: ids.product, cartonsOrdered: 2, pairsPerCarton: 12,
+      unitCostPerCartonFcfa: 250000, sizes: [] }],
+  } as any) as { id: string }
+  const fantome = randomUUID()
+
+  fs.writeFileSync(`${USERDATA}/suppressions-retablies.json`, JSON.stringify([
+    { entite: 'purchase_orders', id: vivante.id },
+    { entite: 'purchase_orders', id: commande.id },  // supprimée par le serveur
+    { entite: 'purchase_orders', id: fantome },      // plus là du tout
+  ], null, 2), 'utf-8')
+
+  const restant = suppressionsEnAttente()
+  verifier('la ligne encore vivante ici reste à arbitrer',
+    restant.some((l) => l.id === vivante.id))
+  verifier('celle que le serveur a supprimée à son tour sort du bandeau',
+    !restant.some((l) => l.id === commande.id))
+  verifier('celle qui n’existe plus sort du bandeau', !restant.some((l) => l.id === fantome))
+  verifier('il ne reste qu’une ligne annoncée', restant.length === 1, `→ ${restant.length}`)
+  verifier('la purge est écrite sur le disque, pas seulement affichée',
+    JSON.parse(fs.readFileSync(`${USERDATA}/suppressions-retablies.json`, 'utf-8')).length === 1)
+
+  // Et quand il ne reste plus rien à arbitrer, le bandeau disparaît de lui-même.
+  getSqlite().prepare('UPDATE purchase_orders SET deleted_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), vivante.id)
+  verifier('plus rien de vivant : le bandeau disparaît sans qu’on clique',
+    suppressionsEnAttente().length === 0)
+  verifier('le fichier lui-même est effacé',
+    !fs.existsSync(`${USERDATA}/suppressions-retablies.json`))
 
   serveur.close()
   console.log(echecs === 0 ? '\n✅ banc refus : tout est vert' : `\n❌ banc refus : ${echecs} échec(s)`)

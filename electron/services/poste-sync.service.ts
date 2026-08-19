@@ -9,7 +9,8 @@ import {
 } from '../db/schema'
 import {
   getDefaultApiUrl, jetonPoste, readConfig,
-  memoriserSuppressionsRetablies, oublierSuppressionsRetablies, suppressionsRetablies,
+  memoriserSuppressionsRetablies, oublierSuppressionsRetablies, remplacerSuppressionsRetablies,
+  suppressionsRetablies,
   type SuppressionRetablie,
 } from './sync-config.service'
 import {
@@ -851,6 +852,12 @@ export async function runPosteSync(opts: {
   }
 }
 
+/** Liste blanche : le nom de table vient d'ici, jamais du fichier. */
+const TABLES_SUPPRIMABLES: Record<string, string> = {
+  warehouses: 'warehouses', suppliers: 'suppliers', customers: 'customers',
+  products: 'products', purchase_orders: 'purchase_orders', sales: 'sales',
+}
+
 /**
  * « Supprimer partout » — le seul geste qui propage des suppressions.
  *
@@ -866,14 +873,8 @@ export async function appliquerSuppressions(): Promise<{
   supprimees: number
   rejected: PushSummary['rejected']
 }> {
-  const lignes = suppressionsRetablies()
+  const lignes = suppressionsEnAttente()
   if (lignes.length === 0) return { success: true, supprimees: 0, rejected: [] }
-
-  // Liste blanche : le nom de table vient d'ici, jamais du fichier.
-  const TABLES: Record<string, string> = {
-    warehouses: 'warehouses', suppliers: 'suppliers', customers: 'customers',
-    products: 'products', purchase_orders: 'purchase_orders', sales: 'sales',
-  }
 
   const sqlite = getSqlite()
   const maintenant = new Date().toISOString()
@@ -885,7 +886,7 @@ export async function appliquerSuppressions(): Promise<{
   // la synchro suivante, sans qu'un mot explique ce va-et-vient.
   const avant: Array<{ table: string; id: string; deletedAt: string | null }> = []
   for (const ligne of lignes) {
-    const table = TABLES[ligne.entite]
+    const table = TABLES_SUPPRIMABLES[ligne.entite]
     if (table === undefined) continue
     const etat = sqlite.prepare(`SELECT deleted_at FROM ${table} WHERE id = ?`).get(ligne.id) as
       { deleted_at: string | null } | undefined
@@ -919,9 +920,38 @@ export async function appliquerSuppressions(): Promise<{
   }
 }
 
-/** Ce que la synchronisation a rétabli et que l'utilisateur peut encore refuser. */
+/**
+ * Ce que la synchronisation a rétabli et que l'utilisateur peut encore refuser.
+ *
+ * Uniquement ce qui est **encore vivant sur ce poste** : la question posée par
+ * l'avertissement est « vous les avez supprimées, le serveur les a toujours —
+ * on fait quoi ? ». Dès que la ligne n'est plus vivante ici — parce que le
+ * serveur l'a supprimée de son côté et que le pull a fait descendre sa
+ * suppression — il n'y a plus rien à arbitrer, et le bandeau doit disparaître.
+ *
+ * Sans ce filtre la liste ne se vidait JAMAIS toute seule : le 19/08, une fois
+ * les 28 commandes supprimées sur le serveur, le poste affichait encore
+ * « 28 commandes rétablies » alors qu'il n'en restait aucune nulle part. La
+ * seule sortie était un bouton, et le bandeau revenait à chaque ouverture.
+ */
 export function suppressionsEnAttente(): SuppressionRetablie[] {
-  return suppressionsRetablies()
+  const lignes = suppressionsRetablies()
+  if (lignes.length === 0) return []
+
+  const sqlite = getSqlite()
+  const encore = lignes.filter((ligne) => {
+    const table = TABLES_SUPPRIMABLES[ligne.entite]
+    if (table === undefined) return false
+    const etat = sqlite.prepare(`SELECT deleted_at FROM ${table} WHERE id = ?`).get(ligne.id) as
+      { deleted_at: string | null } | undefined
+
+    return etat !== undefined && etat.deleted_at === null
+  })
+
+  // Purge définitive : sinon on refiltrerait la même liste morte à chaque appel.
+  if (encore.length !== lignes.length) remplacerSuppressionsRetablies(encore)
+
+  return encore
 }
 
 /**

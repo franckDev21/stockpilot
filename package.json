@@ -1,7 +1,7 @@
 {
   "name": "stockpilot",
   "private": true,
-  "version": "1.10.2",
+  "version": "1.10.3",
   "description": "Gestion de stock chaussures",
   "author": "Feujio",
   "scripts": {
