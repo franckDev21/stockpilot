@@ -879,6 +879,16 @@ export function suppressionsEnAttente(): SuppressionRetablie[] {
 }
 
 /**
+ * « Ces lignes sont bien là où elles doivent être » — l'avertissement disparaît
+ * sans que rien ne soit supprimé. Indispensable : sans lui, le seul bouton
+ * proposé serait celui qui détruit, et un bandeau qu'on ne peut pas fermer finit
+ * par être cliqué.
+ */
+export function ignorerSuppressions(): void {
+  oublierSuppressionsRetablies()
+}
+
+/**
  * Le point d'entrée unique de la synchronisation, manuelle comme automatique.
  *
  * Un poste connecté par l'utilisateur garde la synchro classique (son jeton peut

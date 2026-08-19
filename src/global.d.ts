@@ -216,6 +216,7 @@ declare interface Window {
       now:            () => Promise<SyncSummary>
       pendingDeletions: () => Promise<Array<{ entite: string; id: string }>>
       applyDeletions:   () => Promise<{ success: boolean; message?: string; supprimees: number; rejected: Array<{ entity: string; id: string; reason: string }> }>
+      dismissDeletions: () => Promise<{ success: boolean }>
       getStatus:      () => Promise<SyncStatus>
       configure:      (data: { apiUrl: string; email: string; password: string }) => Promise<{ success: boolean; message?: string }>
       getConfig:      () => Promise<{ apiUrl: string; email: string; configured: boolean } | null>

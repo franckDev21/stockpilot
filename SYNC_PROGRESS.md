@@ -31,7 +31,9 @@ ordre explicite.* Aucune machine ne peut distinguer « cette commande n'existe p
   ce qui fait qu'un poste « récupère tout » en un clic ;
 - elle **garde la trace** de ce qu'elle a rétabli (`suppressions-retablies.json` dans
   userData) et le panneau propose **« Supprimer partout »** : le seul geste qui supprime
-  pour de bon, ici et sur le serveur. Sans lui, plus rien ne serait supprimable.
+  pour de bon, ici et sur le serveur. Sans lui, plus rien ne serait supprimable. À côté,
+  **« Les garder »** (v1.10.1) ferme l'avertissement sans rien détruire — un bandeau qu'on
+  ne peut pas faire disparaître finit toujours par être cliqué.
 - le bouton « Synchroniser » envoie désormais **tout** (`complet: true`) ; la synchro
   automatique des 3 minutes reste incrémentale.
 

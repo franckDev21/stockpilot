@@ -1,7 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { getStatus, configure, logoutFromApi, getCurrentConfig, type SyncSummary, type SyncStatus } from '../services/sync.service'
 import { getDevDefaults } from '../services/sync-config.service'
-import { appliquerSuppressions, infosPush, pushAllData, pullAllData, suppressionsEnAttente, syncMaintenant, verifierSynchronisation, type PushSummary, type PullSummary, type RapportVerification } from '../services/poste-sync.service'
+import { appliquerSuppressions, ignorerSuppressions, infosPush, pushAllData, pullAllData, suppressionsEnAttente, syncMaintenant, verifierSynchronisation, type PushSummary, type PullSummary, type RapportVerification } from '../services/poste-sync.service'
 
 export function registerSyncHandlers(ipc: IpcMain): void {
   // syncMaintenant() et pas runSync() : sur un poste jamais connecte, la synchro
@@ -59,6 +59,7 @@ export function registerSyncHandlers(ipc: IpcMain): void {
   // lui, plus rien ne se supprime par accident.
   ipc.handle('sync:pendingDeletions', () => suppressionsEnAttente())
   ipc.handle('sync:applyDeletions', () => appliquerSuppressions())
+  ipc.handle('sync:dismissDeletions', () => { ignorerSuppressions(); return { success: true } })
 
   // « Vérifier la synchronisation » : ni envoi ni récupération, une comparaison.
   // C'est la seule commande qui répond à « qu'est-ce qui MANQUE ? » — les deux

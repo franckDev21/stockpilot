@@ -133,6 +133,7 @@ const api = {
     now:            () => invoke('sync:now'),
     pendingDeletions: () => invoke('sync:pendingDeletions'),
     applyDeletions:   () => invoke('sync:applyDeletions'),
+    dismissDeletions: () => invoke('sync:dismissDeletions'),
     getStatus:      () => invoke('sync:getStatus'),
     configure:      (data: { apiUrl: string; email: string; password: string }) => invoke('sync:configure', data),
     getConfig:      () => invoke('sync:getConfig'),

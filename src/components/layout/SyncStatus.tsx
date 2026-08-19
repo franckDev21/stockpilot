@@ -65,6 +65,19 @@ export function SyncStatus() {
     }
   }, [])
 
+  // Le pendant du bouton rouge : fermer l'avertissement sans rien détruire. Un
+  // bandeau qu'on ne peut pas faire disparaître finit toujours par être cliqué.
+  const handleGarder = async () => {
+    if (suppression) return
+    setSuppression(true)
+    try {
+      await window.api.sync.dismissDeletions()
+      await rafraichirSuppressions()
+    } finally {
+      setSuppression(false)
+    }
+  }
+
   const handleSupprimerPartout = async () => {
     if (suppression) return
     if (!window.confirm(
@@ -201,13 +214,22 @@ export function SyncStatus() {
                       la synchronisation les a remises. Pour les supprimer vraiment — ici, sur le
                       serveur et sur l'autre poste —, dites-le explicitement.
                     </p>
-                    <button
-                      onClick={handleSupprimerPartout}
-                      disabled={suppression}
-                      className="w-full px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-semibold"
-                    >
-                      {suppression ? 'Suppression…' : 'Supprimer partout'}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleGarder}
+                        disabled={suppression}
+                        className="flex-1 px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-60"
+                      >
+                        Les garder
+                      </button>
+                      <button
+                        onClick={handleSupprimerPartout}
+                        disabled={suppression}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-semibold"
+                      >
+                        {suppression ? 'Suppression…' : 'Supprimer partout'}
+                      </button>
+                    </div>
                   </div>
                 )}
                 {lastSummary && (
