@@ -563,3 +563,28 @@ modification de la synchro.
    savoir s'il les envoie. → demander les 2 bases via « Envoyer plutôt le fichier de base ».
 3. Après déploiement, contrôler en prod : `select count(*) from carton_size_compositions;`
    doit cesser d'être à 0.
+
+---
+
+## 19/08 (suite) — v1.9.0 : « Vérifier la synchronisation »
+
+Franck : « je veux être sûr que tout fonctionne à cent pour cent ». Impossible à
+affirmer sans instrument : `Envoyer` et `Synchroniser` racontent ce qu'ils viennent de
+faire, aucun des deux ne dit **ce qui manque**. Comparer deux tableaux à l'œil, écran
+contre écran, était le seul recours.
+
+- **API `e77d1c4`** : `GET /api/v1/sync/inventory` (ability `sync:pull`, déjà existante) —
+  identifiants, horodatages et **comptes d'enfants** par ligne, jamais le contenu.
+  Quelques dizaines de Ko contre plusieurs Mo pour `/sync/pull` (photos produit).
+- **Desktop `5adb2cd`, tag `v1.9.0`** : bouton dans le panneau de synchro. Par entité :
+  combien de lignes de chaque côté, combien manquent **ici**, combien ne sont **pas encore
+  parties**, et combien ont un **détail différent** — avec un exemple.
+
+**Pourquoi les comptes d'enfants** : le défaut du 19/08 faisait arriver une commande avec
+son en-tête et sans son détail. Un contrôle qui ne compare que les identifiants aurait
+répondu « tout est là » alors que le tableau était incomplet.
+
+**Vérifications** : API 31 tests / 107 assertions ; banc deux postes **25 assertions
+vertes**, dont « le contrôle voit une commande amputée de ses pointures » et « le contrôle
+voit la ligne pas encore envoyée ». Déployé : route vivante en prod (401 sans jeton),
+`latest.yml` en anonyme → `version: 1.9.0`, installeur → 206.
