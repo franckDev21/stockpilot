@@ -1,13 +1,17 @@
 import { app } from 'electron'
 import os from 'node:os'
-import { getDb } from '../db/index'
+import { getDb, getSqlite } from '../db/index'
 import {
   warehouses, products, suppliers, customers,
   purchaseOrders, purchaseOrderItems, cartonSizeCompositions, orderPayments,
   receptions, receptionItems, transfers, transferItems,
   sales, saleItems, salePayments,
 } from '../db/schema'
-import { getDefaultApiUrl, jetonPoste, readConfig } from './sync-config.service'
+import {
+  getDefaultApiUrl, jetonPoste, readConfig,
+  memoriserSuppressionsRetablies, oublierSuppressionsRetablies, suppressionsRetablies,
+  type SuppressionRetablie,
+} from './sync-config.service'
 import {
   applyBundle, getLastSyncedAt, marquerSynchronise, ORDRE_ENTITES, runSync,
   type SyncBundle, type SyncSummary,
@@ -142,7 +146,10 @@ type Row = Record<string, unknown>
  * règlement ajouté après coup ne touche pas toujours l'en-tête, et il serait
  * resté à quai.
  */
-function lireDonneesLocales(depuis?: string | null): Array<{ key: string; label: string; rows: Row[] }> {
+function lireDonneesLocales(
+  depuis?: string | null,
+  suppressions: ReadonlySet<string> = new Set(),
+): Array<{ key: string; label: string; rows: Row[] }> {
   const db = getDb()
   const seuil = toEpoch(depuis)
   const recent = (row: { updatedAt?: string | null }): boolean => seuil === 0 || toEpoch(row.updatedAt) > seuil
@@ -197,7 +204,7 @@ function lireDonneesLocales(depuis?: string | null): Array<{ key: string; label:
     payments: snake(salePaymentsBySale.get(s.id) ?? []),
   }))
 
-  return [
+  const groupes = [
     { key: 'warehouses',      label: 'Entrepôts',    rows: snake(db.select().from(warehouses).all().filter(recent)) },
     { key: 'suppliers',       label: 'Fournisseurs', rows: snake(db.select().from(suppliers).all().filter(recent)) },
     { key: 'customers',       label: 'Clients',      rows: snake(db.select().from(customers).all().filter(recent)) },
@@ -207,6 +214,21 @@ function lireDonneesLocales(depuis?: string | null): Array<{ key: string; label:
     { key: 'transfers',       label: 'Transferts',   rows: transferRows },
     { key: 'sales',           label: 'Ventes',       rows: saleRows },
   ]
+
+  // ── Les suppressions ne partent QUE sur demande explicite ──────────────────
+  //
+  // Une ligne supprimée ici est retirée de l'envoi : le serveur la garde
+  // vivante, l'autre poste aussi, et la synchro la rétablira ici. C'est le
+  // choix du 19/08, après qu'une suppression faite sur un poste « pour forcer
+  // un rechargement » a détruit 24 commandes sur les trois copies. Aucune
+  // machine ne peut distinguer « cette commande n'existe plus » de « je vide
+  // pour recharger » : seul l'utilisateur le sait, et il le dit avec le bouton
+  // « Supprimer partout », qui remplit `suppressions`.
+  for (const groupe of groupes) {
+    groupe.rows = groupe.rows.filter((r) => !r.deleted_at || suppressions.has(String(r.id)))
+  }
+
+  return groupes
 }
 
 /** Découpe en lots bornés à la fois en lignes et en octets. */
@@ -333,6 +355,12 @@ export async function pushAllData(opts: {
   onProgress?:  (p: PushProgress) => void
   /** null = tout envoyer (le bouton) ; sinon, seulement ce qui a bougé depuis. */
   depuis?:      string | null
+  /**
+   * Identifiants dont la suppression doit être appliquée au serveur. Vide par
+   * défaut : la synchronisation ne supprime jamais rien là-bas de sa propre
+   * initiative (voir `lireDonneesLocales`).
+   */
+  suppressions?: ReadonlySet<string>
 } = {}): Promise<PushSummary> {
   const debut = Date.now()
   const vide: PushSummary = {
@@ -347,7 +375,7 @@ export async function pushAllData(opts: {
   // 2) Lecture locale, puis envoi lot par lot dans l'ordre des dépendances.
   let entites: Array<{ key: string; label: string; rows: Row[] }>
   try {
-    entites = lireDonneesLocales(opts.depuis)
+    entites = lireDonneesLocales(opts.depuis, opts.suppressions)
   } catch (e) {
     return { ...vide, message: `Lecture de la base impossible : ${errMessage(e)}` }
   }
@@ -654,6 +682,8 @@ export interface PullSummary {
   success:    boolean
   message?:   string
   pulled:     number
+  /** Lignes supprimées sur ce poste que le serveur a rendues vivantes. */
+  retablis:   SuppressionRetablie[]
   errors:     string[]
   durationMs: number
 }
@@ -685,14 +715,21 @@ async function tirerEntite(apiUrl: string, token: string, entite: string): Promi
 export async function pullAllData(opts: {
   credentials?: { apiUrl: string; email: string; password: string }
   onProgress?:  (p: PushProgress) => void
+  /**
+   * Lever les suppressions locales que le serveur ne confirme pas (voir
+   * `SyncEntityOpts.retablir`). Réservé à un appel qui vient de réussir son
+   * envoi : sans ça, une suppression pas encore transmise serait annulée.
+   */
+  retablir?:    boolean
 } = {}): Promise<PullSummary> {
   const debut = Date.now()
 
   const auth = await resoudreAuth(opts.credentials)
-  if ('message' in auth) return { success: false, message: auth.message, pulled: 0, errors: [], durationMs: 0 }
+  if ('message' in auth) return { success: false, message: auth.message, pulled: 0, retablis: [], errors: [], durationMs: 0 }
 
   const errors: string[] = []
   let pulled = 0
+  let retablis: SuppressionRetablie[] = []
   let fait = 0
 
   for (const entite of ORDRE_ENTITES) {
@@ -704,12 +741,17 @@ export async function pullAllData(opts: {
       return {
         success: false,
         message: `${entite.label} : ${errMessage(e)}`,
-        pulled, errors, durationMs: Date.now() - debut,
+        pulled, retablis, errors, durationMs: Date.now() - debut,
       }
     }
 
     try {
-      pulled += await applyBundle({ apiUrl: auth.apiUrl, email: '', token: auth.token }, bundle, errors)
+      const applique = await applyBundle(
+        { apiUrl: auth.apiUrl, email: '', token: auth.token },
+        bundle, errors, { retablir: opts.retablir === true },
+      )
+      pulled += applique.pulled
+      retablis = retablis.concat(applique.retablis)
     } catch (e) {
       errors.push(`${entite.label} : ${errMessage(e)}`)
     }
@@ -718,7 +760,7 @@ export async function pullAllData(opts: {
     opts.onProgress?.({ entity: entite.label, done: fait, total: ORDRE_ENTITES.length })
   }
 
-  return { success: errors.length === 0, pulled, errors, durationMs: Date.now() - debut }
+  return { success: errors.length === 0, pulled, retablis, errors, durationMs: Date.now() - debut }
 }
 
 /**
@@ -726,6 +768,13 @@ export async function pullAllData(opts: {
  * qui lui manque. Dans cet ordre — pousser d'abord garantit qu'un poste qui
  * vient de saisir une vente ne se la fait pas écraser par une version du
  * serveur plus ancienne que la sienne.
+ *
+ * C'est aussi cet ordre qui rend le rétablissement sûr : une fois l'envoi
+ * intégralement accepté, le serveur connaît TOUT ce que ce poste avait à dire.
+ * Ce qu'il rend alors pour vivant et que ce poste a supprimé est forcément une
+ * suppression périmée — on la lève au lieu de laisser la ligne invisible ici
+ * pour toujours. Sans cette règle, supprimer des lignes pour « les
+ * retélécharger » les condamnait (19/08).
  */
 export async function runPosteSync(opts: {
   onProgress?: (p: PushProgress) => void
@@ -736,11 +785,26 @@ export async function runPosteSync(opts: {
     onProgress: opts.onProgress,
     depuis:     opts.complet ? null : getLastSyncedAt(),
   })
-  const retour = await pullAllData({ onProgress: opts.onProgress })
+  const retour = await pullAllData({
+    onProgress: opts.onProgress,
+    // Toujours : une ligne vivante sur le serveur l'est pour tout le monde,
+    // puisque plus aucune suppression ne part d'ici sans ordre explicite. Ne
+    // rétablir qu'en cas d'envoi parfait serait pire — une seule référence en
+    // double (cas réel) suffirait à bloquer la récupération sans rien dire.
+    retablir:   true,
+  })
+
+  // On garde la trace de ce qui a été rétabli : sans ça, un utilisateur qui
+  // voulait vraiment supprimer verrait la ligne revenir sans plus aucun moyen
+  // de se faire entendre.
+  memoriserSuppressionsRetablies(retour.retablis)
 
   const pushed = Object.values(envoi.counts).reduce((n, c) => n + c.created + c.updated, 0)
   const errors = [
-    ...(envoi.message ? [envoi.message] : []),
+    // `message` n'est pas toujours une erreur : « ce poste n'a aucune donnée à
+    // envoyer » est une information, et l'afficher en rouge sous « lignes non
+    // appliquées » faisait croire à un échec sur un poste parfaitement à jour.
+    ...(envoi.message !== undefined && !envoi.success ? [envoi.message] : []),
     ...envoi.rejected.map((r) => `${r.entity} ${r.id}: ${r.reason}`),
     ...(retour.message ? [retour.message] : []),
     ...retour.errors,
@@ -757,8 +821,61 @@ export async function runPosteSync(opts: {
     configured: true,
     pushed,
     pulled:     retour.pulled,
+    retablis:   retour.retablis.length,
     errors,
   }
+}
+
+/**
+ * « Supprimer partout » — le seul geste qui propage des suppressions.
+ *
+ * Reprend les lignes que la synchronisation avait rétablies, les resupprime
+ * ici, et les supprime cette fois sur le serveur : c'est ce qui rend la
+ * suppression possible sans que la synchronisation puisse l'inventer. Le poste
+ * n'a rien à retirer d'autre — les autres postes suivront à leur prochaine
+ * synchro, comme pour n'importe quelle modification.
+ */
+export async function appliquerSuppressions(): Promise<{
+  success: boolean
+  message?: string
+  supprimees: number
+  rejected: PushSummary['rejected']
+}> {
+  const lignes = suppressionsRetablies()
+  if (lignes.length === 0) return { success: true, supprimees: 0, rejected: [] }
+
+  // Liste blanche : le nom de table vient d'ici, jamais du fichier.
+  const TABLES: Record<string, string> = {
+    warehouses: 'warehouses', suppliers: 'suppliers', customers: 'customers',
+    products: 'products', purchase_orders: 'purchase_orders', sales: 'sales',
+  }
+
+  const sqlite = getSqlite()
+  const maintenant = new Date().toISOString()
+  const ids = new Set<string>()
+  for (const ligne of lignes) {
+    const table = TABLES[ligne.entite]
+    if (table === undefined) continue
+    // Les triggers SQLite remontent `updated_at` : la suppression est donc plus
+    // récente que la version du serveur, et gagne l'arbitrage là-bas.
+    sqlite.prepare(`UPDATE ${table} SET deleted_at = ? WHERE id = ?`).run(maintenant, ligne.id)
+    ids.add(ligne.id)
+  }
+
+  const envoi = await pushAllData({ depuis: null, suppressions: ids })
+  if (envoi.success) oublierSuppressionsRetablies()
+
+  return {
+    success:    envoi.success,
+    message:    envoi.message,
+    supprimees: ids.size,
+    rejected:   envoi.rejected,
+  }
+}
+
+/** Ce que la synchronisation a rétabli et que l'utilisateur peut encore refuser. */
+export function suppressionsEnAttente(): SuppressionRetablie[] {
+  return suppressionsRetablies()
 }
 
 /**
@@ -772,6 +889,15 @@ export async function runPosteSync(opts: {
  */
 export async function syncMaintenant(opts: {
   onProgress?: (p: PushProgress) => void
+  /**
+   * true pour le bouton « Synchroniser » : on renvoie TOUT, sans se fier à
+   * l'horodatage de la dernière synchro. C'est ce qui fait du bouton une
+   * remise à niveau complète — le serveur reçoit l'état entier du poste, donc
+   * l'écart qu'il renvoie est fiable et les suppressions périmées peuvent être
+   * levées. La synchro automatique, elle, reste incrémentale (sinon elle
+   * réexpédierait toute la base, photos comprises, toutes les 3 minutes).
+   */
+  complet?:    boolean
 } = {}): Promise<SyncSummary> {
   if (readConfig()) return runSync()
   if (!jetonPoste()) {

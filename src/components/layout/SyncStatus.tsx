@@ -19,6 +19,22 @@ function formatRelative(iso: string | null): string {
   return `il y a ${diffD} j`
 }
 
+// Une suppression rétablie doit se lire en français, pas en noms de tables.
+const LIBELLES_ENTITES: Record<string, string> = {
+  purchase_orders: 'commande(s)',
+  products:        'produit(s)',
+  suppliers:       'fournisseur(s)',
+  customers:       'client(s)',
+  warehouses:      'entrepôt(s)',
+  sales:           'vente(s)',
+}
+
+function resumerEntites(lignes: Array<{ entite: string }>): string {
+  const parEntite = new Map<string, number>()
+  for (const ligne of lignes) parEntite.set(ligne.entite, (parEntite.get(ligne.entite) ?? 0) + 1)
+  return [...parEntite].map(([e, n]) => `${n} ${LIBELLES_ENTITES[e] ?? e}`).join(', ')
+}
+
 export function SyncStatus() {
   const triggerRefresh = useAppStore((s) => s.triggerRefresh)
   const [status, setStatus] = useState<SyncStatus | null>(null)
@@ -35,6 +51,39 @@ export function SyncStatus() {
   // l'œil, en comparant deux écrans côte à côte.
   const [verifying, setVerifying] = useState(false)
   const [rapport, setRapport] = useState<RapportVerification | null>(null)
+  // Ce que la synchro a rétabli : des lignes supprimées ici que le serveur avait
+  // toujours. Tant que l'utilisateur n'a pas tranché, elles reviennent à chaque
+  // synchro — il faut donc lui montrer, et lui laisser dire « non, supprimez ».
+  const [aSupprimer, setASupprimer] = useState<Array<{ entite: string; id: string }>>([])
+  const [suppression, setSuppression] = useState(false)
+
+  const rafraichirSuppressions = useCallback(async () => {
+    try {
+      setASupprimer(await window.api.sync.pendingDeletions())
+    } catch {
+      // sans conséquence : le bloc reste simplement masqué
+    }
+  }, [])
+
+  const handleSupprimerPartout = async () => {
+    if (suppression) return
+    if (!window.confirm(
+      `Supprimer définitivement ${aSupprimer.length} ligne(s) ici ET sur le serveur ?\n\n`
+      + 'Elles disparaîtront aussi de l\'autre poste à sa prochaine synchronisation. '
+      + 'Cette action ne peut pas être annulée depuis l\'application.',
+    )) return
+    setSuppression(true)
+    try {
+      const res = await window.api.sync.applyDeletions()
+      await rafraichirSuppressions()
+      triggerRefresh()
+      if (!res.success) {
+        window.alert(res.message ?? `${res.rejected.length} ligne(s) refusée(s) par le serveur.`)
+      }
+    } finally {
+      setSuppression(false)
+    }
+  }
 
   const handleVerify = async () => {
     if (verifying) return
@@ -63,7 +112,8 @@ export function SyncStatus() {
 
   useEffect(() => {
     window.api.sync.getConfig().then((cfg) => setCompte(cfg ? { email: cfg.email } : null)).catch(() => {})
-  }, [open])
+    void rafraichirSuppressions()
+  }, [open, rafraichirSuppressions])
 
   const handleSyncNow = async () => {
     if (syncing) return
@@ -73,6 +123,7 @@ export function SyncStatus() {
       setLastSummary(summary)
       if (summary.pulled > 0) triggerRefresh()
       await refreshStatus()
+      await rafraichirSuppressions()
     } catch {
       // silencieux — window.api.sync.now() ne devrait jamais rejeter, filet de sécurité
     } finally {
@@ -134,11 +185,46 @@ export function SyncStatus() {
                     Ce poste se synchronise automatiquement avec le serveur, sans identifiants.
                   </p>
                 )}
+                {aSupprimer.length > 0 && (
+                  /* Une suppression faite ici ne part plus toute seule au serveur :
+                     impossible pour la machine de distinguer « cette commande
+                     n'existe plus » de « je vide pour recharger », et le second
+                     cas a détruit 24 commandes le 19/08. La synchro rétablit
+                     donc la ligne, et c'est ici que l'utilisateur peut dire
+                     l'inverse — une fois, explicitement. */
+                  <div className="text-xs rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-900/50 p-2.5 space-y-2">
+                    <p className="font-semibold text-amber-800 dark:text-amber-300">
+                      {resumerEntites(aSupprimer)} rétablie(s) depuis le serveur
+                    </p>
+                    <p className="text-amber-700 dark:text-amber-400 leading-relaxed">
+                      Vous les aviez supprimées ici, mais elles existent toujours sur le serveur :
+                      la synchronisation les a remises. Pour les supprimer vraiment — ici, sur le
+                      serveur et sur l'autre poste —, dites-le explicitement.
+                    </p>
+                    <button
+                      onClick={handleSupprimerPartout}
+                      disabled={suppression}
+                      className="w-full px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-semibold"
+                    >
+                      {suppression ? 'Suppression…' : 'Supprimer partout'}
+                    </button>
+                  </div>
+                )}
                 {lastSummary && (
                   <div className="text-xs rounded-lg bg-slate-50 dark:bg-slate-700/50 p-2.5 space-y-1">
                     <p className="text-slate-600 dark:text-slate-300">
                       {lastSummary.pushed} envoyé(s), {lastSummary.pulled} reçu(s)
                     </p>
+                    {(lastSummary.retablis ?? 0) > 0 && (
+                      /* Une ligne supprimée ici mais vivante sur le serveur ne
+                         revenait jamais : la suppression étant plus récente,
+                         elle gagnait l'arbitrage à chaque synchro. On la lève
+                         désormais, et on le dit — sinon des lignes
+                         réapparaissent sans que personne comprenne pourquoi. */
+                      <p className="font-semibold text-emerald-600 dark:text-emerald-400">
+                        {lastSummary.retablis} ligne(s) rétablie(s) depuis le serveur
+                      </p>
+                    )}
                     {lastSummary.errors.length > 0 && (
                       /* « N erreur(s) — voir logs » ne disait rien à personne :
                          une ligne que la synchro n'a pas pu écrire disparaissait

@@ -9,7 +9,27 @@ Le banc utilise le **vrai code du dépôt** ; seuls `electron` et `electron/db/i
 remplacés (`stubs/`) — le premier n'existe pas hors d'Electron, le second doit pouvoir
 basculer entre deux fichiers SQLite pour jouer deux postes.
 
-## Ce qu'il vérifie (25 assertions)
+Deux scénarios, deux fichiers : `bench-detail.ts` (le détail des commandes qui ne
+circulait pas) et `bench-suppression.ts` (la suppression qui détruisait au lieu de
+recharger).
+
+## `bench-suppression.ts` — « j'ai supprimé pour recharger » (17 assertions)
+
+Le geste du 19/08 après-midi, celui qui a coûté 24 commandes :
+
+1. A saisit trois commandes et les envoie ;
+2. B se synchronise → il les a, avec leur détail ;
+3. **B les supprime** en pensant les retélécharger ;
+4. B clique « Synchroniser » → il doit **les retrouver**, le compteur doit le dire, et
+   A ne doit **rien** avoir perdu ;
+5. « Supprimer partout » sur B → cette fois elles disparaissent vraiment, des deux côtés,
+   et ne reviennent plus.
+
+Sur le code d'avant, les points 4 et 5 échouent : B reste à zéro **et A perd ses trois
+commandes**. C'est la preuve que la règle « une suppression ne part que sur ordre
+explicite » n'est pas décorative.
+
+## `bench-detail.ts` — les détails qui ne circulaient pas (25 assertions)
 
 Le scénario exact rapporté le 19/08 :
 
@@ -49,6 +69,8 @@ npm install
 docker run --rm -v "$PWD":/bench -v /chemin/vers/stockpilot:/repo:ro -w /bench node:20 node build.mjs
 docker run --rm --network host -v "$PWD":/bench -v /chemin/vers/stockpilot:/repo:ro -w /bench \
   -e BENCH_USERDATA=/bench/userdata -e APP_ROOT=/bench node:20 node bench-detail.cjs
+docker run --rm --network host -v "$PWD":/bench -v /chemin/vers/stockpilot:/repo:ro -w /bench \
+  -e BENCH_USERDATA=/bench/userdataA -e APP_ROOT=/bench node:20 node bench-suppression.cjs
 ```
 
 ## Pièges

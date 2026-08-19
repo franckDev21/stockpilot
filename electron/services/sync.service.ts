@@ -9,7 +9,8 @@ import {
   syncMeta,
 } from '../db/schema'
 import {
-  type SyncConfig, readConfig, writeConfig, isConfigured, clearConfig, effectiveConfig,
+  type SyncConfig, type SuppressionRetablie,
+  readConfig, writeConfig, isConfigured, clearConfig, effectiveConfig,
 } from './sync-config.service'
 
 // ─── Synchronisation offline-first avec l'API en ligne ───────────────────────
@@ -299,6 +300,15 @@ function countLocalChangesSince(since: string | null): number {
 
 // ─── Diff générique push/pull pour une entité « plate » ──────────────────────
 
+/**
+ * Options communes à toutes les entités — voir `SyncEntityOpts.retablir` et
+ * `SyncEntityOpts.suppressionsAutorisees`.
+ */
+export interface OptionsSync {
+  retablir?:     boolean
+  suppressions?: ReadonlySet<string>
+}
+
 interface SyncEntityOpts<
   LocalRow extends { id: string; updatedAt: string; deletedAt: string | null },
   ApiRow extends { id: string; updatedAt: string; deletedAt?: string | null },
@@ -316,6 +326,35 @@ interface SyncEntityOpts<
    * false pour receptions/transfers, que le desktop ne sait de toute façon pas supprimer.
    */
   canDelete: boolean
+  /**
+   * Rétablir ici ce que le serveur donne pour vivant alors que ce poste l'a
+   * supprimé localement — et renvoyer la liste de ce qui a été rétabli.
+   *
+   * L'arbitrage normal est « dernière écriture gagne » : une suppression locale
+   * étant forcément plus récente que la ligne qu'elle efface, le pull ne la
+   * remet JAMAIS. Une ligne supprimée ici restait donc invisible ici pour
+   * toujours, sans le moindre message — et sa suppression partait au serveur,
+   * puis à l'autre poste. C'est le 19/08 : des commandes supprimées sur un
+   * poste « pour les retélécharger » ont été détruites sur les trois copies au
+   * lieu d'être rechargées.
+   *
+   * Va avec `suppressionsAutorisees` : une suppression que l'utilisateur n'a
+   * pas explicitement demandé de propager ne quitte pas ce poste, donc le
+   * serveur garde la ligne vivante, donc on peut la rétablir ici. Les deux
+   * règles forment un tout — activer celle-ci sans l'autre ne servirait à rien
+   * (la ligne serait déjà supprimée là-bas).
+   */
+  retablir?: boolean
+  /**
+   * Identifiants dont la suppression peut être propagée au serveur.
+   *
+   * Vide par défaut, et c'est le point important : **la synchronisation ne
+   * supprime plus rien sur le serveur de sa propre initiative.** Une suppression
+   * est un ordre destructeur qu'aucune machine ne peut distinguer d'un « je
+   * vide pour recharger » ; elle n'est transmise que sur demande explicite
+   * (bouton « Supprimer partout »), qui remplit cet ensemble.
+   */
+  suppressionsAutorisees?: ReadonlySet<string>
   localRows: LocalRow[]
   remoteRows: ApiRow[]
   toApiBody: (row: LocalRow) => Record<string, unknown>
@@ -333,7 +372,7 @@ interface SyncEntityOpts<
 async function syncSimpleEntity<
   LocalRow extends { id: string; updatedAt: string; deletedAt: string | null },
   ApiRow extends { id: string; updatedAt: string; deletedAt?: string | null },
->(opts: SyncEntityOpts<LocalRow, ApiRow>): Promise<{ pushed: number; pulled: number }> {
+>(opts: SyncEntityOpts<LocalRow, ApiRow>): Promise<{ pushed: number; pulled: number; retablis: string[] }> {
   const remoteById = new Map(opts.remoteRows.map((r) => [r.id, r]))
   let pushed = 0
 
@@ -343,7 +382,7 @@ async function syncSimpleEntity<
       if (local.deletedAt) {
         // La ligne n'existe à l'API que si elle y a déjà été poussée ; et on ne
         // redemande pas une suppression déjà enregistrée là-bas.
-        if (opts.canDelete && remote && !remote.deletedAt) {
+        if (opts.canDelete && opts.suppressionsAutorisees?.has(local.id) === true && remote && !remote.deletedAt) {
           await apiDelete(opts.cfg, `${opts.endpoint}/${local.id}`)
           pushed++
         }
@@ -363,25 +402,31 @@ async function syncSimpleEntity<
 
   const localById = new Map(opts.localRows.map((r) => [r.id, r]))
   let pulled = 0
+  const retablis: string[] = []
 
   for (const remote of opts.remoteRows) {
     const local = localById.get(remote.id)
-    if (!local || toEpoch(remote.updatedAt) > toEpoch(local.updatedAt)) {
+    // Supprimée ici, vivante sur le serveur : la suppression n'a jamais été
+    // demandée nulle part ailleurs, la ligne existe toujours pour tout le monde.
+    // On la remet — c'est ce qui fait qu'un poste « récupère tout » d'un clic.
+    const perimee = opts.retablir === true && local !== undefined && local.deletedAt !== null && !remote.deletedAt
+    if (!local || perimee || toEpoch(remote.updatedAt) > toEpoch(local.updatedAt)) {
       try {
         await opts.applyRemoteToLocal(remote)
         pulled++
+        if (perimee) retablis.push(remote.id)
       } catch (e) {
         opts.errors.push(`${opts.name} (pull) ${remote.id}: ${errMessage(e)}`)
       }
     }
   }
 
-  return { pushed, pulled }
+  return { pushed, pulled, retablis }
 }
 
 // ─── Entités simples : warehouses, products, suppliers, customers ────────────
 
-async function syncWarehouses(cfg: SyncConfig, errors: string[], fournies?: ApiWarehouse[]) {
+async function syncWarehouses(cfg: SyncConfig, errors: string[], fournies?: ApiWarehouse[], options: OptionsSync = {}) {
   const db = getDb()
   const localRows = db.select().from(warehouses).all()
   const remoteRows = fournies ?? (await apiGet<ApiWarehouse[]>(cfg, '/warehouses')) ?? []
@@ -402,10 +447,10 @@ async function syncWarehouses(cfg: SyncConfig, errors: string[], fournies?: ApiW
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'warehouses', endpoint: '/warehouses', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
+  return syncSimpleEntity({ cfg, name: 'warehouses', endpoint: '/warehouses', canUpdate: true, canDelete: true, retablir: options.retablir, suppressionsAutorisees: options.suppressions, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
-async function syncSuppliers(cfg: SyncConfig, errors: string[], fournies?: ApiSupplier[]) {
+async function syncSuppliers(cfg: SyncConfig, errors: string[], fournies?: ApiSupplier[], options: OptionsSync = {}) {
   const db = getDb()
   const localRows = db.select().from(suppliers).all()
   const remoteRows = fournies ?? (await apiGet<ApiSupplier[]>(cfg, '/suppliers')) ?? []
@@ -433,10 +478,10 @@ async function syncSuppliers(cfg: SyncConfig, errors: string[], fournies?: ApiSu
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'suppliers', endpoint: '/suppliers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
+  return syncSimpleEntity({ cfg, name: 'suppliers', endpoint: '/suppliers', canUpdate: true, canDelete: true, retablir: options.retablir, suppressionsAutorisees: options.suppressions, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
-async function syncCustomers(cfg: SyncConfig, errors: string[], fournies?: ApiCustomer[]) {
+async function syncCustomers(cfg: SyncConfig, errors: string[], fournies?: ApiCustomer[], options: OptionsSync = {}) {
   const db = getDb()
   const localRows = db.select().from(customers).all()
   const remoteRows = fournies ?? (await apiGet<ApiCustomer[]>(cfg, '/customers')) ?? []
@@ -464,7 +509,7 @@ async function syncCustomers(cfg: SyncConfig, errors: string[], fournies?: ApiCu
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
+  return syncSimpleEntity({ cfg, name: 'customers', endpoint: '/customers', canUpdate: true, canDelete: true, retablir: options.retablir, suppressionsAutorisees: options.suppressions, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
 /** Une référence n'est prise que par un produit encore actif (index partiel). */
@@ -474,7 +519,7 @@ function estReferencePrise(reference: string): boolean {
     .get() !== undefined
 }
 
-async function syncProducts(cfg: SyncConfig, errors: string[], fournies?: ApiProduct[]) {
+async function syncProducts(cfg: SyncConfig, errors: string[], fournies?: ApiProduct[], options: OptionsSync = {}) {
   const db = getDb()
   const localRows = db.select().from(products).all()
   const remoteRows = fournies ?? (await apiGet<ApiProduct[]>(cfg, '/products')) ?? []
@@ -540,12 +585,12 @@ async function syncProducts(cfg: SyncConfig, errors: string[], fournies?: ApiPro
       .run()
   }
 
-  return syncSimpleEntity({ cfg, name: 'products', endpoint: '/products', canUpdate: true, canDelete: true, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
+  return syncSimpleEntity({ cfg, name: 'products', endpoint: '/products', canUpdate: true, canDelete: true, retablir: options.retablir, suppressionsAutorisees: options.suppressions, localRows, remoteRows, toApiBody, applyRemoteToLocal, errors, skipPush: fournies !== undefined })
 }
 
 // ─── Commandes fournisseur (+ items + tailles) ────────────────────────────────
 
-async function syncPurchaseOrders(cfg: SyncConfig, errors: string[], fournies?: ApiPurchaseOrder[]): Promise<{ pushed: number; pulled: number; remoteOrders: ApiPurchaseOrder[] }> {
+async function syncPurchaseOrders(cfg: SyncConfig, errors: string[], fournies?: ApiPurchaseOrder[], options: OptionsSync = {}): Promise<{ pushed: number; pulled: number; retablis: string[]; remoteOrders: ApiPurchaseOrder[] }> {
   const db = getDb()
   const localOrders = db.select().from(purchaseOrders).all()
   const remoteOrders = fournies ?? (await apiGet<ApiPurchaseOrder[]>(cfg, '/purchase-orders')) ?? []
@@ -684,7 +729,7 @@ async function syncPurchaseOrders(cfg: SyncConfig, errors: string[], fournies?: 
   }
 
   const result = await syncSimpleEntity({
-    cfg, name: 'purchase_orders', endpoint: '/purchase-orders', canUpdate: true, canDelete: true,
+    cfg, name: 'purchase_orders', endpoint: '/purchase-orders', canUpdate: true, canDelete: true, retablir: options.retablir, suppressionsAutorisees: options.suppressions,
     localRows: localOrders, remoteRows: remoteOrders, toApiBody, applyRemoteToLocal, errors,
     skipPush: fournies !== undefined,
   })
@@ -751,7 +796,7 @@ async function syncOrderPayments(cfg: SyncConfig, remoteOrders: ApiPurchaseOrder
 
 // ─── Réceptions (+ items) — create-only côté API ──────────────────────────────
 
-async function syncReceptions(cfg: SyncConfig, errors: string[], fournies?: ApiReception[]) {
+async function syncReceptions(cfg: SyncConfig, errors: string[], fournies?: ApiReception[], options: OptionsSync = {}) {
   const db = getDb()
   const localReceptions = db.select().from(receptions).all()
   const remoteRows = fournies ?? (await apiGet<ApiReception[]>(cfg, '/receptions')) ?? []
@@ -839,7 +884,7 @@ async function syncReceptions(cfg: SyncConfig, errors: string[], fournies?: ApiR
   return syncSimpleEntity({
     // canUpdate: true → les modifications d'arrivage (super-admin) sont poussées
     // en PUT /receptions/{id}. Requiert le endpoint update côté API.
-    cfg, name: 'receptions', endpoint: '/receptions', canUpdate: true, canDelete: false,
+    cfg, name: 'receptions', endpoint: '/receptions', canUpdate: true, canDelete: false, retablir: options.retablir, suppressionsAutorisees: options.suppressions,
     localRows: localReceptions, remoteRows, toApiBody, applyRemoteToLocal, errors,
     skipPush: fournies !== undefined,
   })
@@ -847,7 +892,7 @@ async function syncReceptions(cfg: SyncConfig, errors: string[], fournies?: ApiR
 
 // ─── Transferts (+ items) — create-only côté API ─────────────────────────────
 
-async function syncTransfers(cfg: SyncConfig, errors: string[], fournies?: ApiTransfer[]) {
+async function syncTransfers(cfg: SyncConfig, errors: string[], fournies?: ApiTransfer[], options: OptionsSync = {}) {
   const db = getDb()
   const localTransfers = db.select().from(transfers).all()
   const remoteRows = fournies ?? (await apiGet<ApiTransfer[]>(cfg, '/transfers')) ?? []
@@ -891,7 +936,7 @@ async function syncTransfers(cfg: SyncConfig, errors: string[], fournies?: ApiTr
   }
 
   return syncSimpleEntity({
-    cfg, name: 'transfers', endpoint: '/transfers', canUpdate: false, canDelete: false,
+    cfg, name: 'transfers', endpoint: '/transfers', canUpdate: false, canDelete: false, retablir: options.retablir, suppressionsAutorisees: options.suppressions,
     localRows: localTransfers, remoteRows, toApiBody, applyRemoteToLocal, errors,
     skipPush: fournies !== undefined,
   })
@@ -1014,7 +1059,7 @@ function replaySaleCancellation(remote: ApiSale): void {
 
 // ─── Ventes (+ lignes + règlements) ──────────────────────────────────────────
 
-async function syncSales(cfg: SyncConfig, errors: string[], fournies?: ApiSale[]): Promise<{ pushed: number; pulled: number }> {
+async function syncSales(cfg: SyncConfig, errors: string[], fournies?: ApiSale[], options: OptionsSync = {}): Promise<{ pushed: number; pulled: number; retablis: string[] }> {
   const db = getDb()
   const localSales = db.select().from(sales).all()
   const remoteRows = fournies ?? (await apiGet<ApiSale[]>(cfg, '/sales')) ?? []
@@ -1086,7 +1131,7 @@ async function syncSales(cfg: SyncConfig, errors: string[], fournies?: ApiSale[]
   }
 
   const result = await syncSimpleEntity({
-    cfg, name: 'sales', endpoint: '/sales', canUpdate: true, canDelete: true,
+    cfg, name: 'sales', endpoint: '/sales', canUpdate: true, canDelete: true, retablir: options.retablir, suppressionsAutorisees: options.suppressions,
     localRows: localSales, remoteRows, toApiBody, applyRemoteToLocal, errors,
     skipPush: fournies !== undefined,
   })
@@ -1113,7 +1158,7 @@ async function syncSales(cfg: SyncConfig, errors: string[], fournies?: ApiSale[]
     }
   }
 
-  return { pushed, pulled: result.pulled }
+  return { pushed, pulled: result.pulled, retablis: result.retablis }
 }
 
 // ─── Descente depuis le bundle /sync/pull ─────────────────────────────────────
@@ -1149,28 +1194,48 @@ export const ORDRE_ENTITES: Array<{ cle: keyof SyncBundle; api: string; label: s
 ]
 
 /** Applique un bundle (ou un morceau de bundle) sans rien pousser. */
-export async function applyBundle(cfg: SyncConfig, bundle: SyncBundle, errors: string[]): Promise<number> {
+/**
+ * @param retablir voir `SyncEntityOpts.retablir` : lever ici les suppressions
+ *        locales que le serveur ne confirme pas. À n'activer qu'après un envoi
+ *        intégralement accepté.
+ */
+export async function applyBundle(
+  cfg: SyncConfig,
+  bundle: SyncBundle,
+  errors: string[],
+  options: OptionsSync = {},
+): Promise<{ pulled: number; retablis: SuppressionRetablie[] }> {
   let pulled = 0
+  const retablis: SuppressionRetablie[] = []
+  const compter = (entite: string) => (r: { pulled: number; retablis: string[] }): void => {
+    pulled += r.pulled
+    for (const id of r.retablis) retablis.push({ entite, id })
+  }
 
-  if (bundle.warehouses) pulled += (await syncWarehouses(cfg, errors, bundle.warehouses)).pulled
-  if (bundle.suppliers)  pulled += (await syncSuppliers(cfg, errors, bundle.suppliers)).pulled
-  if (bundle.customers)  pulled += (await syncCustomers(cfg, errors, bundle.customers)).pulled
-  if (bundle.products)   pulled += (await syncProducts(cfg, errors, bundle.products)).pulled
+  if (bundle.warehouses) compter('warehouses')(await syncWarehouses(cfg, errors, bundle.warehouses, options))
+  if (bundle.suppliers)  compter('suppliers')(await syncSuppliers(cfg, errors, bundle.suppliers, options))
+  if (bundle.customers)  compter('customers')(await syncCustomers(cfg, errors, bundle.customers, options))
+  if (bundle.products)   compter('products')(await syncProducts(cfg, errors, bundle.products, options))
 
   if (bundle.purchaseOrders) {
-    const orders = await syncPurchaseOrders(cfg, errors, bundle.purchaseOrders)
-    pulled += orders.pulled
+    compter('purchase_orders')(await syncPurchaseOrders(cfg, errors, bundle.purchaseOrders, options))
     // Les reglements voyagent avec leur commande dans le bundle.
+    //
+    // Pas de retablissement ici, volontairement : `order_payments` n'a pas de
+    // colonne `deleted_at` cote API, un reglement supprime sur un poste y reste
+    // donc vivant. Le retablir ferait « ressusciter l'avance supprimee » — le
+    // bug corrige en v1.3.2. La regle ne vaut que pour les entites dont l'API
+    // sait dire « celle-la est supprimee ».
     pulled += (await syncOrderPayments(cfg, bundle.purchaseOrders, errors, true)).pulled
   }
 
-  if (bundle.receptions) pulled += (await syncReceptions(cfg, errors, bundle.receptions)).pulled
-  if (bundle.transfers)  pulled += (await syncTransfers(cfg, errors, bundle.transfers)).pulled
-  if (bundle.sales)      pulled += (await syncSales(cfg, errors, bundle.sales)).pulled
+  if (bundle.receptions) compter('receptions')(await syncReceptions(cfg, errors, bundle.receptions, options))
+  if (bundle.transfers)  compter('transfers')(await syncTransfers(cfg, errors, bundle.transfers, options))
+  if (bundle.sales)      compter('sales')(await syncSales(cfg, errors, bundle.sales, options))
 
   rattraperMouvementsDeReception(errors)
 
-  return pulled
+  return { pulled, retablis }
 }
 
 /**
@@ -1234,13 +1299,15 @@ export interface SyncSummary {
   configured: boolean
   pushed:     number
   pulled:     number
+  /** Lignes que ce poste avait supprimées et que le serveur a rendues vivantes. */
+  retablis?:  number
   errors:     string[]
   reason?:    'not_configured' | 'offline' | 'already_running'
 }
 
 let syncInFlight = false
 
-export async function runSync(): Promise<SyncSummary> {
+export async function runSync(options: OptionsSync = {}): Promise<SyncSummary> {
   if (syncInFlight) {
     return { success: false, online: false, configured: isConfigured(), pushed: 0, pulled: 0, errors: [], reason: 'already_running' }
   }
@@ -1261,25 +1328,25 @@ export async function runSync(): Promise<SyncSummary> {
     let pulled = 0
 
     // 1) Entités simples (aucune dépendance)
-    const wh = await syncWarehouses(cfg, errors); pushed += wh.pushed; pulled += wh.pulled
-    const su = await syncSuppliers(cfg, errors);  pushed += su.pushed; pulled += su.pulled
-    const cu = await syncCustomers(cfg, errors);  pushed += cu.pushed; pulled += cu.pulled
-    const pr = await syncProducts(cfg, errors);   pushed += pr.pushed; pulled += pr.pulled
+    const wh = await syncWarehouses(cfg, errors, undefined, options); pushed += wh.pushed; pulled += wh.pulled
+    const su = await syncSuppliers(cfg, errors, undefined, options);  pushed += su.pushed; pulled += su.pulled
+    const cu = await syncCustomers(cfg, errors, undefined, options);  pushed += cu.pushed; pulled += cu.pulled
+    const pr = await syncProducts(cfg, errors, undefined, options);   pushed += pr.pushed; pulled += pr.pulled
 
     // 2) Commandes fournisseur (dépend de suppliers/products)
-    const po = await syncPurchaseOrders(cfg, errors); pushed += po.pushed; pulled += po.pulled
+    const po = await syncPurchaseOrders(cfg, errors, undefined, options); pushed += po.pushed; pulled += po.pulled
 
     // 3) Paiements (dépend des commandes ; réutilise la liste déjà tirée par syncPurchaseOrders)
     const pay = await syncOrderPayments(cfg, po.remoteOrders, errors); pushed += pay.pushed; pulled += pay.pulled
 
     // 4) Réceptions (dépend des commandes + entrepôts)
-    const re = await syncReceptions(cfg, errors); pushed += re.pushed; pulled += re.pulled
+    const re = await syncReceptions(cfg, errors, undefined, options); pushed += re.pushed; pulled += re.pulled
 
     // 5) Transferts (dépend des entrepôts + produits)
-    const tr = await syncTransfers(cfg, errors); pushed += tr.pushed; pulled += tr.pulled
+    const tr = await syncTransfers(cfg, errors, undefined, options); pushed += tr.pushed; pulled += tr.pulled
 
     // 6) Ventes (dépend des clients, produits et entrepôts)
-    const sa = await syncSales(cfg, errors); pushed += sa.pushed; pulled += sa.pulled
+    const sa = await syncSales(cfg, errors, undefined, options); pushed += sa.pushed; pulled += sa.pulled
 
     setLastSyncedAt(new Date().toISOString())
 

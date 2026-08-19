@@ -5,7 +5,49 @@ faut savoir pour continuer est ici.
 
 ---
 
-## 📌 POINT DE REPRISE — 19/08/2026 — LIRE EN PREMIER (remplace tout ce qui suit)
+## 📌 POINT DE REPRISE — 19/08/2026, 16 h — LIRE EN PREMIER (remplace tout ce qui suit)
+
+### v1.10.0 — « j'ai supprimé pour recharger », et tout a disparu
+
+**Ce qui s'est passé.** Le poste B recevait un tableau de commandes incomplet. Franck a
+supprimé les lignes sur B en pensant que « Synchroniser » les retéléchargerait. C'est
+l'inverse qui se produisait, deux fois :
+
+1. la synchro **envoie avant de recevoir** : la suppression partait au serveur, qui
+   obéissait (elle était plus récente), puis le poste A la subissait à son tour ;
+2. même sans cela, le pull ne peut pas rendre une ligne supprimée ici : la suppression
+   étant forcément plus récente, elle gagne l'arbitrage à chaque passage. La ligne
+   restait invisible **pour toujours**, sans un mot.
+
+Mesuré en production le 19/08 : **24 commandes sur 27 marquées supprimées** (21–25/07),
+41 lignes de détail intactes. Suppression logique → rien n'est perdu physiquement.
+
+**La règle qui change.** *Une suppression ne quitte plus le poste où elle est faite sans
+ordre explicite.* Aucune machine ne peut distinguer « cette commande n'existe plus » de
+« je vide pour recharger » ; seul l'utilisateur le sait. Donc :
+
+- la synchro **n'envoie plus** les lignes supprimées (`lireDonneesLocales`) ;
+- elle **rétablit** ce que le serveur donne pour vivant (`SyncEntityOpts.retablir`) — c'est
+  ce qui fait qu'un poste « récupère tout » en un clic ;
+- elle **garde la trace** de ce qu'elle a rétabli (`suppressions-retablies.json` dans
+  userData) et le panneau propose **« Supprimer partout »** : le seul geste qui supprime
+  pour de bon, ici et sur le serveur. Sans lui, plus rien ne serait supprimable.
+- le bouton « Synchroniser » envoie désormais **tout** (`complet: true`) ; la synchro
+  automatique des 3 minutes reste incrémentale.
+
+**Preuves.** `bench/bench-suppression.ts` — 2 vraies bases SQLite contre une vraie API
+Laravel : **17 assertions vertes**. Le même scénario sur le code d'avant **perd les trois
+commandes sur les deux postes**. `bench-detail.ts` reste vert (25 assertions).
+❌ UI jamais cliquée (pas d'Electron sur ce serveur) — limite permanente.
+
+**Reste ouvert.** Les 24 commandes supprimées le 21–25/07 sont toujours marquées
+supprimées **sur le serveur** : aucun poste ne peut les rendre vivantes, il faut un
+`update purchase_orders set deleted_at = null, updated_at = now()` côté serveur, et
+seul Franck peut dire si ces commandes doivent revenir.
+
+---
+
+## POINT DE REPRISE PRÉCÉDENT — 19/08/2026 (périmé, gardé pour l'historique)
 
 ### Où on en est
 

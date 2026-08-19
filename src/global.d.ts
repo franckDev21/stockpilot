@@ -51,6 +51,8 @@ interface SyncSummary {
   configured: boolean
   pushed:     number
   pulled:     number
+  /** Lignes supprimées sur ce poste que le serveur a rendues vivantes. */
+  retablis?:  number
   errors:     string[]
   reason?:    'not_configured' | 'offline' | 'already_running'
 }
@@ -70,6 +72,7 @@ interface PullSummary {
   success:    boolean
   message?:   string
   pulled:     number
+  retablis:   number
   errors:     string[]
   durationMs: number
 }
@@ -211,6 +214,8 @@ declare interface Window {
     }
     sync: {
       now:            () => Promise<SyncSummary>
+      pendingDeletions: () => Promise<Array<{ entite: string; id: string }>>
+      applyDeletions:   () => Promise<{ success: boolean; message?: string; supprimees: number; rejected: Array<{ entity: string; id: string; reason: string }> }>
       getStatus:      () => Promise<SyncStatus>
       configure:      (data: { apiUrl: string; email: string; password: string }) => Promise<{ success: boolean; message?: string }>
       getConfig:      () => Promise<{ apiUrl: string; email: string; configured: boolean } | null>

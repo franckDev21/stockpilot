@@ -23,6 +23,65 @@ function configFile(): string {
   return path.join(app.getPath('userData'), 'sync-config.json')
 }
 
+// ─── Suppressions rétablies par la synchronisation ───────────────────────────
+//
+// Une suppression faite sur un poste ne part PLUS toute seule au serveur (voir
+// `SyncEntityOpts.suppressionsAutorisees`) : la synchro rétablit la ligne à
+// partir du serveur. Sans mémoire, l'intention de l'utilisateur serait perdue —
+// il supprime, la ligne revient, et il n'a plus aucun moyen de dire « non,
+// supprimez-la vraiment ». On garde donc ici ce que la synchro a rétabli, pour
+// que le panneau puisse le montrer et proposer de le supprimer partout.
+
+export interface SuppressionRetablie {
+  /** Table locale, telle que nommée dans le schéma (purchase_orders, products…). */
+  entite: string
+  id:     string
+}
+
+function fichierSuppressions(): string {
+  return path.join(app.getPath('userData'), 'suppressions-retablies.json')
+}
+
+export function suppressionsRetablies(): SuppressionRetablie[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(fichierSuppressions(), 'utf-8')) as unknown
+    if (!Array.isArray(raw)) return []
+    return raw.filter((l): l is SuppressionRetablie =>
+      typeof l === 'object' && l !== null
+      && typeof (l as SuppressionRetablie).entite === 'string'
+      && typeof (l as SuppressionRetablie).id === 'string')
+  } catch {
+    return []
+  }
+}
+
+/** Ajoute sans doublon ; l'ordre d'origine est conservé. */
+export function memoriserSuppressionsRetablies(lignes: SuppressionRetablie[]): void {
+  if (lignes.length === 0) return
+  const connues = suppressionsRetablies()
+  const vues = new Set(connues.map((l) => `${l.entite}:${l.id}`))
+  for (const ligne of lignes) {
+    const cle = `${ligne.entite}:${ligne.id}`
+    if (vues.has(cle)) continue
+    vues.add(cle)
+    connues.push(ligne)
+  }
+  try {
+    fs.mkdirSync(path.dirname(fichierSuppressions()), { recursive: true })
+    fs.writeFileSync(fichierSuppressions(), JSON.stringify(connues, null, 2), 'utf-8')
+  } catch {
+    // La mémoire est un confort : son échec ne doit pas faire échouer la synchro.
+  }
+}
+
+export function oublierSuppressionsRetablies(): void {
+  try {
+    fs.unlinkSync(fichierSuppressions())
+  } catch {
+    // rien à supprimer
+  }
+}
+
 // ─── .env (dev uniquement) ────────────────────────────────────────────────────
 // Fallback pratique en développement : un fichier .env à la racine du projet
 // peut définir VITE_API_URL / VITE_API_EMAIL / VITE_API_PASSWORD. Jamais commité

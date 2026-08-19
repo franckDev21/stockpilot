@@ -13,12 +13,13 @@ const stubs = {
 }
 
 await build({
-  entryPoints: ['/bench/bench-detail.ts'],
+  entryPoints: ['/bench/bench-detail.ts', '/bench/bench-suppression.ts'],
   bundle: true,
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  outfile: '/bench/bench-detail.cjs',
+  outdir: '/bench',
+  outExtension: { '.js': '.cjs' },
   external: ['better-sqlite3', 'drizzle-orm/better-sqlite3'],
   plugins: [stubs],
 })
