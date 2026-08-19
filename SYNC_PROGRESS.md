@@ -530,3 +530,34 @@ définitivement. Même famille de bug que celui de FEUJIO du 11/08.
    partiel côté API.
 3. Rejouer le banc deux postes headless avec un scénario « commande modifiée » et
    « référence en collision » — les 27 assertions actuelles ne couvrent que la création.
+
+### ✅ Corrigé le 19/08 (commits `527a42b` desktop / `dabdba4` API) — PAS ENCORE DÉPLOYÉ
+
+| Défaut | Correction |
+|---|---|
+| Détails de commande figés au premier envoi | Réconciliation complète des lignes et pointures, dans les deux sens, dès que la version distante l'emporte |
+| Arrivage corrigé → stock d'avant | Mouvements recalculés quand le détail bouge, des deux côtés |
+| Arrivage appliqué avant sa commande → aucun mouvement, pour toujours | Rattrapage en fin de bundle, rejoué tant que la commande manque |
+| Pointures qui s'empilent quand un poste en retard pousse | Un poste qui n'a pas gagné l'arbitrage n'ajoute des pointures qu'à une ligne qui n'en a aucune |
+| Référence produit en collision → produit jamais reçu, en silence | Le produit distant garde sa référence, le local est renommé, et c'est **écrit à l'écran** |
+| « N erreur(s) — voir logs » | La liste des lignes non appliquées, en clair, dans le panneau de synchro |
+| `products.reference` unique aveugle au soft delete (API) | Migration `000016` : index partiel `WHERE deleted_at IS NULL` (essai à blanc concluant sur le schéma de prod) |
+
+**Preuves** — API : 28 tests / 99 assertions (les 3 nouveaux tests de réconciliation
+échouent sur le code d'avant). Poste : banc deux postes headless, deux vraies bases SQLite
+contre une vraie API Laravel, rejouant le scénario exact de Franck — **22 assertions
+vertes, 10 échecs sur le code d'avant**, dont `UNIQUE constraint failed: products.reference`
+qui confirme la cause du produit « lv » invisible.
+
+Banc conservé : `bench-detail.ts` (scratchpad de session) — à reprendre pour toute
+modification de la synchro.
+
+### Ce qui reste ouvert
+
+1. **Déploiement** : API à déployer (migration comprise), puis desktop en **v1.8.0** — les
+   deux postes ne recevront la correction qu'après redémarrage de l'application.
+2. **Pourquoi 0 pointure sur le serveur de prod** reste non expliqué : le serveur les
+   accepte (test vert sur l'ancien code aussi). Il faut voir la base d'un poste pour
+   savoir s'il les envoie. → demander les 2 bases via « Envoyer plutôt le fichier de base ».
+3. Après déploiement, contrôler en prod : `select count(*) from carton_size_compositions;`
+   doit cesser d'être à 0.
