@@ -420,6 +420,218 @@ export async function pushAllData(opts: {
   }
 }
 
+// ─── « Vérifier la synchronisation » ─────────────────────────────────────────
+//
+// Répond à une question que rien ne savait poser jusqu'ici : « mon poste et le
+// serveur disent-ils exactement la même chose ? ». Envoyer et synchroniser
+// annoncent ce qu'ils ont FAIT ; aucun des deux ne dit ce qui MANQUE. Quand le
+// tableau des commandes n'est pas le même d'un poste à l'autre, il n'y avait
+// aucun moyen de savoir lesquelles, ni de quel côté.
+//
+// La comparaison porte aussi sur le NOMBRE d'enfants de chaque ligne (lignes de
+// commande, pointures, règlements, lignes d'arrivage). Comparer les seuls
+// identifiants dirait « tout est là » pour une commande arrivée sans son détail
+// — c'est exactement le défaut corrigé le 19/08, et le contrôle doit être
+// capable de le voir revenir.
+
+export interface EcartEntite {
+  entite:          string
+  label:           string
+  /** Lignes vivantes de chaque côté. */
+  local:           number
+  serveur:         number
+  /** Présentes sur le serveur, absentes d'ici. */
+  manquantesIci:   string[]
+  /** Présentes ici, absentes du serveur. */
+  manquantesLaBas: string[]
+  /** Même ligne des deux côtés, mais pas le même détail. */
+  detailDifferent: Array<{ id: string; ici: string; serveur: string }>
+}
+
+export interface RapportVerification {
+  success:    boolean
+  message?:   string
+  /** Vrai quand les deux côtés sont d'accord sur tout. */
+  identique:  boolean
+  ecarts:     EcartEntite[]
+  durationMs: number
+}
+
+interface LigneInventaire {
+  id: string; updatedAt: string | null; deletedAt: string | null
+  items?: number; sizes?: number; payments?: number
+}
+
+/** Ce que le serveur dit avoir, en léger (ni contenu ni photos). */
+async function tirerInventaire(apiUrl: string, token: string): Promise<Record<string, LigneInventaire[]>> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_LOT_MS)
+  try {
+    const res = await fetch(`${apiUrl.replace(/\/$/, '')}/api/v1/sync/inventory`, {
+      method:  'GET',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      signal:  controller.signal,
+    })
+    const text = await res.text()
+    const json = (text ? JSON.parse(text) : {}) as Record<string, unknown>
+    if (!res.ok) {
+      const message = typeof json.error === 'string'
+        ? json.error
+        : typeof json.message === 'string' ? json.message : `HTTP ${res.status}`
+      throw new ErreurDefinitive(message)
+    }
+    return json as unknown as Record<string, LigneInventaire[]>
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Comment décrire le détail d'une ligne, pour le comparer d'un côté à l'autre. */
+function resumerDetail(l: LigneInventaire): string {
+  const bouts: string[] = []
+  if (l.items    !== undefined) bouts.push(`${l.items} ligne(s)`)
+  if (l.sizes    !== undefined) bouts.push(`${l.sizes} pointure(s)`)
+  if (l.payments !== undefined) bouts.push(`${l.payments} règlement(s)`)
+  return bouts.join(', ')
+}
+
+export async function verifierSynchronisation(): Promise<RapportVerification> {
+  const debut = Date.now()
+
+  const auth = await resoudreAuth()
+  if ('message' in auth) {
+    return { success: false, message: auth.message, identique: false, ecarts: [], durationMs: 0 }
+  }
+
+  let inventaire: Record<string, LigneInventaire[]>
+  try {
+    inventaire = await tirerInventaire(auth.apiUrl, auth.token)
+  } catch (e) {
+    return { success: false, message: errMessage(e), identique: false, ecarts: [], durationMs: Date.now() - debut }
+  }
+
+  const ecarts: EcartEntite[] = []
+
+  for (const entite of ORDRE_ENTITES) {
+    const cote = inventaireLocal(entite.api)
+    const distant = (inventaire[chameau(entite.api)] ?? inventaire[entite.api] ?? [])
+      .filter((l) => !l.deletedAt)
+
+    const ici = new Map(cote.map((l) => [l.id, l]))
+    const laBas = new Map(distant.map((l) => [l.id, l]))
+
+    const manquantesIci:   string[] = []
+    const manquantesLaBas: string[] = []
+    const detailDifferent: Array<{ id: string; ici: string; serveur: string }> = []
+
+    for (const [id, ligne] of laBas) {
+      if (!ici.has(id)) { manquantesIci.push(id); continue }
+      const a = resumerDetail(ici.get(id)!)
+      const b = resumerDetail(ligne)
+      if (a !== b) detailDifferent.push({ id, ici: a, serveur: b })
+    }
+    for (const id of ici.keys()) if (!laBas.has(id)) manquantesLaBas.push(id)
+
+    if (manquantesIci.length || manquantesLaBas.length || detailDifferent.length) {
+      ecarts.push({
+        entite: entite.api, label: entite.label,
+        local: ici.size, serveur: laBas.size,
+        manquantesIci, manquantesLaBas, detailDifferent,
+      })
+    }
+  }
+
+  return { success: true, identique: ecarts.length === 0, ecarts, durationMs: Date.now() - debut }
+}
+
+/**
+ * Le même inventaire, côté poste. Les enfants sont comptés SANS filtrer les
+ * suppressions, exactement comme le serveur : un règlement supprimé d'un seul
+ * côté doit apparaître comme un écart, pas être gommé par le comptage.
+ */
+function inventaireLocal(entite: string): LigneInventaire[] {
+  const db = getDb()
+
+  switch (entite) {
+    case 'warehouses':
+      return db.select().from(warehouses).all()
+        .filter((r) => !r.deletedAt)
+        .map((r) => ({ id: r.id, updatedAt: r.updatedAt, deletedAt: r.deletedAt }))
+
+    case 'suppliers':
+      return db.select().from(suppliers).all()
+        .filter((r) => !r.deletedAt)
+        .map((r) => ({ id: r.id, updatedAt: r.updatedAt, deletedAt: r.deletedAt }))
+
+    case 'customers':
+      return db.select().from(customers).all()
+        .filter((r) => !r.deletedAt)
+        .map((r) => ({ id: r.id, updatedAt: r.updatedAt, deletedAt: r.deletedAt }))
+
+    case 'products':
+      return db.select().from(products).all()
+        .filter((r) => !r.deletedAt)
+        .map((r) => ({ id: r.id, updatedAt: r.updatedAt, deletedAt: r.deletedAt }))
+
+    case 'purchase_orders': {
+      const lignes = db.select().from(purchaseOrderItems).all()
+      const parDe = groupBy(lignes, (i) => i.orderId)
+      const commandeDeLigne = new Map(lignes.map((i) => [i.id, i.orderId]))
+
+      // Les pointures pendent d'une ligne, pas de la commande : on les remonte.
+      const pointures = new Map<string, number>()
+      for (const t of db.select().from(cartonSizeCompositions).all()) {
+        const commande = commandeDeLigne.get(t.orderItemId)
+        if (commande) pointures.set(commande, (pointures.get(commande) ?? 0) + 1)
+      }
+
+      const reglements = groupBy(db.select().from(orderPayments).all(), (p) => p.orderId)
+
+      return db.select().from(purchaseOrders).all()
+        .filter((o) => !o.deletedAt)
+        .map((o) => ({
+          id: o.id, updatedAt: o.updatedAt, deletedAt: o.deletedAt,
+          items:    (parDe.get(o.id) ?? []).length,
+          sizes:    pointures.get(o.id) ?? 0,
+          payments: (reglements.get(o.id) ?? []).length,
+        }))
+    }
+
+    case 'receptions': {
+      const parDe = groupBy(db.select().from(receptionItems).all(), (i) => i.receptionId)
+      return db.select().from(receptions).all()
+        .filter((r) => !r.deletedAt)
+        .map((r) => ({ id: r.id, updatedAt: r.updatedAt, deletedAt: r.deletedAt, items: (parDe.get(r.id) ?? []).length }))
+    }
+
+    case 'transfers': {
+      const parDe = groupBy(db.select().from(transferItems).all(), (i) => i.transferId)
+      return db.select().from(transfers).all()
+        .filter((t) => !t.deletedAt)
+        .map((t) => ({ id: t.id, updatedAt: t.updatedAt, deletedAt: t.deletedAt, items: (parDe.get(t.id) ?? []).length }))
+    }
+
+    case 'sales': {
+      const parDe = groupBy(db.select().from(saleItems).all(), (i) => i.saleId)
+      const reglements = groupBy(db.select().from(salePayments).all(), (p) => p.saleId)
+      return db.select().from(sales).all()
+        .filter((v) => !v.deletedAt)
+        .map((v) => ({
+          id: v.id, updatedAt: v.updatedAt, deletedAt: v.deletedAt,
+          items:    (parDe.get(v.id) ?? []).length,
+          payments: (reglements.get(v.id) ?? []).length,
+        }))
+    }
+
+    default:
+      return []
+  }
+}
+
+function chameau(snake: string): string {
+  return snake.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
+}
+
 /** Ce que l'interface doit savoir avant de proposer l'envoi. */
 export function infosPush(): { posteLabel: string; apiUrl: string; sansIdentifiants: boolean; appVersion: string } {
   const cfg = readConfig()

@@ -73,6 +73,22 @@ interface PullSummary {
   errors:     string[]
   durationMs: number
 }
+interface EcartEntite {
+  entite:          string
+  label:           string
+  local:           number
+  serveur:         number
+  manquantesIci:   string[]
+  manquantesLaBas: string[]
+  detailDifferent: Array<{ id: string; ici: string; serveur: string }>
+}
+interface RapportVerification {
+  success:    boolean
+  message?:   string
+  identique:  boolean
+  ecarts:     EcartEntite[]
+  durationMs: number
+}
 interface SyncStatus {
   online:       boolean
   configured:   boolean
@@ -203,6 +219,7 @@ declare interface Window {
       pushInfo:       () => Promise<{ posteLabel: string; apiUrl: string; sansIdentifiants: boolean; appVersion: string }>
       pushAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) => Promise<PushSummary>
       pullAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) => Promise<PullSummary>
+      verify:         () => Promise<RapportVerification>
       onPushProgress: (cb: (p: { entity: string; done: number; total: number }) => void) => (() => void)
     }
   }

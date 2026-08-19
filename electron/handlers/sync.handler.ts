@@ -1,7 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { getStatus, configure, logoutFromApi, getCurrentConfig, type SyncSummary, type SyncStatus } from '../services/sync.service'
 import { getDevDefaults } from '../services/sync-config.service'
-import { infosPush, pushAllData, pullAllData, syncMaintenant, type PushSummary, type PullSummary } from '../services/poste-sync.service'
+import { infosPush, pushAllData, pullAllData, syncMaintenant, verifierSynchronisation, type PushSummary, type PullSummary, type RapportVerification } from '../services/poste-sync.service'
 
 export function registerSyncHandlers(ipc: IpcMain): void {
   // syncMaintenant() et pas runSync() : sur un poste jamais connecte, la synchro
@@ -45,6 +45,11 @@ export function registerSyncHandlers(ipc: IpcMain): void {
       if (!event.sender.isDestroyed()) event.sender.send('sync:pushProgress', p)
     },
   }))
+
+  // « Vérifier la synchronisation » : ni envoi ni récupération, une comparaison.
+  // C'est la seule commande qui répond à « qu'est-ce qui MANQUE ? » — les deux
+  // autres ne disent que ce qu'elles viennent de faire.
+  ipc.handle('sync:verify', (): Promise<RapportVerification> => verifierSynchronisation())
 
   ipc.handle('sync:logout', () => {
     logoutFromApi()

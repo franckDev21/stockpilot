@@ -141,6 +141,7 @@ const api = {
       invoke('sync:pushAll', data),
     pullAll:        (data?: { credentials?: { apiUrl: string; email: string; password: string } }) =>
       invoke('sync:pullAll', data),
+    verify:         () => invoke('sync:verify'),
     // Progression de l'envoi ; renvoie une fonction de désabonnement.
     onPushProgress: (cb: (p: { entity: string; done: number; total: number }) => void): (() => void) => {
       const listener = (_e: unknown, payload: { entity: string; done: number; total: number }) => cb(payload)

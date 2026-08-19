@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Cloud, CloudOff, RefreshCw, Settings2, Loader2, X } from 'lucide-react'
+import { Cloud, CloudOff, RefreshCw, Settings2, Loader2, X, ClipboardCheck } from 'lucide-react'
 import { useAppStore } from '@/store/app.store'
 
 // ─── Indicateur de synchronisation + panneau de configuration ────────────────
@@ -30,6 +30,26 @@ export function SyncStatus() {
   // embarqué dans l'application, sans identifiants. Il faut le dire, sinon on
   // croit qu'il reste quelque chose à configurer.
   const [compte, setCompte] = useState<{ email: string } | null>(null)
+  // « Vérifier » ne synchronise rien : il compare ce poste au serveur et dit ce
+  // qui manque de chaque côté. Sans ça, un tableau incomplet ne se voyait qu'à
+  // l'œil, en comparant deux écrans côte à côte.
+  const [verifying, setVerifying] = useState(false)
+  const [rapport, setRapport] = useState<RapportVerification | null>(null)
+
+  const handleVerify = async () => {
+    if (verifying) return
+    setVerifying(true)
+    try {
+      setRapport(await window.api.sync.verify())
+    } catch (e) {
+      setRapport({
+        success: false, identique: false, ecarts: [], durationMs: 0,
+        message: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      setVerifying(false)
+    }
+  }
 
   const refreshStatus = useCallback(() => {
     window.api.sync.getStatus().then(setStatus).catch(() => {})
@@ -153,6 +173,63 @@ export function SyncStatus() {
                   {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                   Synchroniser maintenant
                 </button>
+                <button
+                  onClick={handleVerify}
+                  disabled={verifying}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg
+                             border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300
+                             hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-60"
+                >
+                  {verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardCheck className="w-3.5 h-3.5" />}
+                  Vérifier la synchronisation
+                </button>
+
+                {rapport && (
+                  <div className="text-xs rounded-lg bg-slate-50 dark:bg-slate-700/50 p-2.5 space-y-2">
+                    {!rapport.success ? (
+                      <p className="text-red-500">Vérification impossible : {rapport.message}</p>
+                    ) : rapport.identique ? (
+                      <p className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                        Ce poste et le serveur disent exactement la même chose.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-amber-600 dark:text-amber-400">
+                          {rapport.ecarts.length} écart(s) entre ce poste et le serveur
+                        </p>
+                        <ul className="space-y-1.5 max-h-56 overflow-y-auto">
+                          {rapport.ecarts.map((e) => (
+                            <li key={e.entite} className="leading-snug">
+                              <span className="font-semibold text-slate-700 dark:text-slate-200">{e.label}</span>
+                              <span className="text-slate-500 dark:text-slate-400"> — ici {e.local}, serveur {e.serveur}</span>
+                              {e.manquantesIci.length > 0 && (
+                                <span className="block text-amber-600 dark:text-amber-400">
+                                  {e.manquantesIci.length} absente(s) de ce poste → « Synchroniser maintenant »
+                                </span>
+                              )}
+                              {e.manquantesLaBas.length > 0 && (
+                                <span className="block text-amber-600 dark:text-amber-400">
+                                  {e.manquantesLaBas.length} pas encore sur le serveur → « Envoyer au serveur »
+                                </span>
+                              )}
+                              {e.detailDifferent.length > 0 && (
+                                <span className="block text-red-500">
+                                  {e.detailDifferent.length} avec un détail différent
+                                  {e.detailDifferent[0] && (
+                                    <span className="block text-[11px] text-red-500/80">
+                                      ex. ici {e.detailDifferent[0].ici || 'rien'} / serveur {e.detailDifferent[0].serveur || 'rien'}
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 <button
                   onClick={() => setShowConfig((v) => !v)}
                   className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg
