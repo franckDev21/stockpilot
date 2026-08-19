@@ -5,7 +5,73 @@ faut savoir pour continuer est ici.
 
 ---
 
-## 📌 POINT DE REPRISE — 18/08/2026 (soir) — LIRE EN PREMIER
+## 📌 POINT DE REPRISE — 19/08/2026 — LIRE EN PREMIER (remplace tout ce qui suit)
+
+### Où on en est
+
+Tout est **codé, prouvé, déployé et poussé**. Les deux dépôts sont propres.
+**On attend le retour de Franck**, parti tester. Rien n'est en cours.
+
+Deux versions publiées aujourd'hui :
+
+| Version | Ce qu'elle apporte |
+|---|---|
+| **v1.8.0** | La synchro fait enfin circuler les **modifications**, pas seulement les créations |
+| **v1.9.0** | Bouton **« Vérifier la synchronisation »** : dit ce qui manque, et de quel côté |
+
+### Ce que Franck doit faire, et qu'il faut lui redemander
+
+1. **Fermer et rouvrir l'application sur les DEUX postes** — l'auto-update ne s'applique
+   qu'au redémarrage, et il faut peut-être deux passes (1.8.0 puis 1.9.0). Un poste qui se
+   comporte comme avant est un poste resté sur une vieille version : lui faire vérifier le
+   numéro affiché.
+2. Sur chaque poste : **« Vérifier la synchronisation »** dans le panneau de synchro, et
+   **m'envoyer ce qu'il affiche**. C'est devenu la source de vérité — plus besoin de
+   comparer deux écrans à l'œil.
+3. **Envoyer les deux bases** (« Envoyer plutôt le fichier de base ») : c'est ce qui manque
+   pour trancher les deux questions restées ouvertes (voir plus bas).
+
+### Vérifié une dernière fois avant la pause (19/08, ~14 h 30)
+
+- `https://stockpilot.feujio.com/api/v1/health` → **200**
+- `GET /api/v1/sync/inventory` sans jeton → **401** (route vivante en prod, protégée)
+- `latest.yml` en anonyme → **`version: 1.9.0`** ; installeur → **206**
+- Migration `000016` `Ran` en prod, index unique **partiel** vérifié sur `products.reference`
+- Les deux dépôts : `main` aligné sur `origin/main`, rien en attente
+
+### Les deux questions encore ouvertes
+
+1. **« Il manquait des lignes dans le tableau des commandes »** — deux explications
+   possibles, non départagées : des lignes **refusées à l'envoi**, ou les **21 commandes
+   supprimées le 25/07** qu'un poste en retard affichait encore. Le nouveau contrôle de
+   cohérence répondra en une capture d'écran.
+2. **0 pointure sur le serveur de prod** (34 lignes de commande, 0
+   `carton_size_compositions`) — le serveur les accepte pourtant, même l'ancien code le
+   prouve en test. Explication la plus probable : **les postes n'en ont pas non plus** (les
+   24 commandes sont toutes en « brouillon », aucune réception, aucune vente). À confirmer
+   sur une vraie base de poste.
+
+### Ce qu'il ne faut PAS refaire
+
+- Ne pas re-chercher un bug de transport : un lot d'envoi qui échoue **arrête l'envoi et le
+  signale**, il ne perd rien en silence. Vérifié en lisant le code.
+- Ne pas soupçonner le serveur de perdre les pointures : test vert **même sur l'ancien
+  code**.
+- Ne pas relancer le banc sans délai entre une création et sa modification : SQLite
+  horodate **à la seconde**, et une modification faite dans la même seconde n'est pas « plus
+  récente » — faux échec garanti.
+
+### Où est le banc deux postes
+
+`bench-detail.ts` dans le scratchpad de session (`.../scratchpad/bench/`), avec son API
+Laravel locale sur le port 8099 (`.../scratchpad/apitest/`, conteneur `banc_api`, supprimé
+en fin de session — à relancer avec `php artisan serve`). **25 assertions** rejouant le
+scénario exact de Franck. À reprendre pour toute modification de la synchro.
+
+---
+
+## 📌 Point de reprise précédent — 18/08/2026 (soir)
+
 
 ### En une phrase
 
